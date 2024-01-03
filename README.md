@@ -1,6 +1,6 @@
 # StreamDiffusion
 
-[English](./README.md) | [日本語](./README-ja.md)
+[English](./StreamDiffusion/README.md) | [日本語](./StreamDiffusion/README-ja.md)
 
 <p align="center">
   <img src="./assets/demo_07.gif" width=90%>

@@ -22,9 +22,9 @@ left = 0
 
 def screen(
     event: threading.Event,
-    height: int = 512,
-    width: int = 512,
-    monitor: Dict[str, int] = {"top": 300, "left": 200, "width": 512, "height": 512},
+    height: int = 1024,
+    width: int = 1024,
+    monitor: Dict[str, int] = {"top": 300, "left": 200, "width": 1024, "height": 1024},
 ):
     global inputs
     with mss.mss() as sct:
@@ -35,6 +35,8 @@ def screen(
             img = sct.grab(monitor)
             img = PIL.Image.frombytes("RGB", img.size, img.bgra, "raw", "BGRX")
             img.resize((height, width))
+            # img object is our image
+
             inputs.append(pil2tensor(img))
     print('exit : screen')
 def dummy_screen(
@@ -42,9 +44,9 @@ def dummy_screen(
         height: int,
 ):
     root = tk.Tk()
-    root.title("Press Enter to start")
+    root.title("draw-realtime by jasperan")
     root.geometry(f"{width}x{height}")
-    root.resizable(False, False)
+    root.resizable(True, True)
     root.attributes("-alpha", 0.8)
     root.configure(bg="black")
     def destroy(event):
@@ -181,9 +183,9 @@ def image_generation_process(
             inputs.clear()
             output_images = stream.stream(
                 input_batch.to(device=stream.device, dtype=stream.dtype)
-            ).cpu()
+            ).cpu() # this step processes the input batch
             if frame_buffer_size == 1:
-                output_images = [output_images]
+                output_images = [output_images] # we get the results already
             for output_image in output_images:
                 queue.put(output_image, block=False)
 
@@ -203,8 +205,8 @@ def main(
     prompt: str = "1girl with brown dog hair, thick glasses, smiling",
     negative_prompt: str = "low quality, bad quality, blurry, low resolution",
     frame_buffer_size: int = 1,
-    width: int = 512,
-    height: int = 512,
+    width: int = 1024,
+    height: int = 1024,
     acceleration: Literal["none", "xformers", "tensorrt"] = "xformers",
     use_denoising_batch: bool = True,
     seed: int = 2,

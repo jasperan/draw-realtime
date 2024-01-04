@@ -2,3 +2,4 @@ matplotlib
 pillow
 mss
 rich
+opencv-python

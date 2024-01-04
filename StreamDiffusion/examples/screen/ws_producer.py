@@ -41,7 +41,6 @@ top = 0
 left = 0
 
 global sct
-sct = mss.mss()
 
 
 
@@ -52,7 +51,7 @@ def screen(
 ):
     global inputs
     global sct
-    with sct:
+    with mss.mss() as sct:
         img = sct.grab(monitor)
         # img object is our image
         img_data = img.bgra

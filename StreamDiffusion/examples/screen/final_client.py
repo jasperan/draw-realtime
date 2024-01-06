@@ -5,18 +5,14 @@ import threading
 from multiprocessing import Process, Queue, get_context
 from typing import List, Literal, Dict, Optional
 import torch
-import PIL.Image
 from streamdiffusion.image_utils import pil2tensor
-import mss
 import fire
 import tkinter as tk
 from streamdiffusion.image_utils import postprocess_image
 from PIL import Image
-import pika
 from io import BytesIO
 import base64
 import websockets
-from websockets.server import serve
 import asyncio
 import requests
 
@@ -26,11 +22,9 @@ from utils.viewer import receive_images
 from utils.wrapper import StreamDiffusionWrapper
 
 inputs = []
-top = 0
-left = 0
 
 # this variable will be updated every time a new message comes from the queue.
-global_img = [open('a.base64', 'r').read()]
+global_img = []
 
 
 def screen(

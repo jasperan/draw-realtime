@@ -4,5 +4,4 @@ mss
 rich
 opencv-python
 matplotlib
-pika
 uvicorn

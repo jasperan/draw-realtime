@@ -15,8 +15,6 @@ import base64
 import websockets
 import asyncio
 import requests
-import requests
-from requests.adapters import HTTPAdapter
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 
@@ -43,7 +41,6 @@ def screen(
             print("terminate read thread")
             break
         # this works img = Image.open("img/forgh3.jpg")
-        #global_img = open('a.base64', 'r').read()
         global global_img
         s = requests.Session()
         retries = Retry(total=5,
@@ -62,7 +59,6 @@ def screen(
 
         for x in data:
             im_bytes = base64.b64decode(x)
-            #im_bytes = base64.b64decode(global_img)   # im_bytes is a binary image
             im_file = BytesIO(im_bytes)  # convert image to file-like object
             img = Image.open(im_file)   # img is now PIL Image object
             img.resize((height, width))
@@ -73,9 +69,8 @@ def screen(
         # after all iterations are done, clear our list of base64 encodings after they've been added 
         # to the q.
         global_img.clear()
-
         #time.sleep(2)
-        #print(inputs)
+
     print('exit : screen')
 def dummy_screen(
         width: int,
@@ -281,7 +276,7 @@ def main(
     asyncio.get_event_loop().run_until_complete(start_server)
 
 
-    monitor = dummy_screen(width, height)
+    monitor = dummy_screen(1024, 1024)
     ctx = get_context('spawn')
     queue = ctx.Queue()
     fps_queue = ctx.Queue()

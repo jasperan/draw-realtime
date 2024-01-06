@@ -26,7 +26,7 @@ import mss
 import fire
 import tkinter as tk
 from viewer import receive_images
-from utils.wrapper import StreamDiffusionWrapper
+from wrapper import StreamDiffusionWrapper
 import base64
 from io import BytesIO
 
@@ -69,7 +69,7 @@ def screen(
         im_bytes = im_file.getvalue()  # im_bytes: image in binary format.
         im_b64 = base64.b64encode(im_bytes)
 
-        print(im_b64)
+        #print(im_b64)
 
         return im_b64
             

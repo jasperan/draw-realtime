@@ -10,6 +10,7 @@ from streamdiffusion.image_utils import pil2tensor
 import mss
 import fire
 import tkinter as tk
+from streamdiffusion.image_utils import postprocess_image
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -33,11 +34,13 @@ def screen(
                 print("terminate read thread")
                 break
             img = sct.grab(monitor)
+            #print(img.size)
             img = PIL.Image.frombytes("RGB", img.size, img.bgra, "raw", "BGRX")
             img.resize((height, width))
             # img object is our image
 
             inputs.append(pil2tensor(img))
+            #print(inputs)
     print('exit : screen')
 def dummy_screen(
         width: int,
@@ -187,6 +190,13 @@ def image_generation_process(
             if frame_buffer_size == 1:
                 output_images = [output_images] # we get the results already
             for output_image in output_images:
+                print(type(output_image))
+                print(output_image)
+                print('Queue size: {}'.format(queue.qsize()))
+                res = postprocess_image(output_image, output_type="pil")[0]
+                print(res, type(res))
+                res.save('exxx.png')
+                #time.sleep(3)
                 queue.put(output_image, block=False)
 
             fps = 1 / (time.time() - start_time)

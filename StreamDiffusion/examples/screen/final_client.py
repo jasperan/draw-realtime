@@ -15,6 +15,10 @@ import base64
 import websockets
 import asyncio
 import requests
+import requests
+from requests.adapters import HTTPAdapter
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -41,8 +45,14 @@ def screen(
         # this works img = Image.open("img/forgh3.jpg")
         #global_img = open('a.base64', 'r').read()
         global global_img
+        s = requests.Session()
+        retries = Retry(total=5,
+                backoff_factor=1,
+                status_forcelist=[429, 500, 502, 503, 504])
+        
+        s.mount('http://', HTTPAdapter(max_retries=retries))
 
-        response = requests.get('http://127.0.0.1:8000')
+        response = s.get('http://127.0.0.1:8000')
         #print(response.text)
         data = response.json()
         assert type(data) == type(list())
@@ -164,6 +174,7 @@ def image_generation_process(
     """
     
     global inputs
+    taesd_model = "madebyollin/taesd"
     stream = StreamDiffusionWrapper(
         model_id_or_path=model_id_or_path,
         lora_dict=lora_dict,
@@ -171,6 +182,7 @@ def image_generation_process(
         frame_buffer_size=frame_buffer_size,
         width=width,
         height=height,
+        use_tiny_vae=True, # TAESD
         warmup=10,
         acceleration=acceleration,
         do_add_noise=do_add_noise,
@@ -235,14 +247,17 @@ def image_generation_process(
     print(f"fps: {fps}")
 
 def main(
-    model_id_or_path: str = "KBlueLeaf/kohaku-v2.1",
+    #model_id_or_path: str = "KBlueLeaf/kohaku-v2.1",
+    model_id_or_path: str ="stabilityai/sd-turbo",
     lora_dict: Optional[Dict[str, float]] = None,
-    prompt: str = "1girl with brown dog hair, thick glasses, smiling",
-    negative_prompt: str = "low quality, bad quality, blurry, low resolution",
+    #prompt: str = "1girl with brown dog hair, thick glasses, smiling",
+    #prompt: str = "1girl, anime, detailed, intricate, full of colour, cinematic lighting, trending on artstation, 8k, hyperrealistic, focused, extreme details",
+    prompt: str = "landscape, detailed, intricate, full of colour, cinematic lighting, trending on artstation, 8k, hyperrealistic, focused, extreme details",
+    negative_prompt: str = "low quality, bad quality, blurry, low resolution, pixelated, pixel art, low fidelity",
     frame_buffer_size: int = 1,
-    width: int = 1024,
-    height: int = 1024,
-    acceleration: Literal["none", "xformers", "tensorrt"] = "xformers",
+    width: int = 512,
+    height: int = 512,
+    acceleration: Literal["none", "xformers", "tensorrt"] = "tensorrt",
     use_denoising_batch: bool = True,
     seed: int = 2,
     cfg_type: Literal["none", "full", "self", "initialize"] = "self",

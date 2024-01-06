@@ -55,7 +55,7 @@ def screen(
             img_data = img.bgra
             img = PIL.Image.frombytes("RGB", img.size, img.bgra, "raw", "BGRX")
             #print(type(img_data), len(img_data))
-            #img.resize((height, width))
+            img.resize((512, 512))
 
 
             # img object is our image
@@ -83,7 +83,7 @@ def screen(
             #mutex.release()
 
             print('Buffer Length: {} | Image 1 Length: {}'.format(len(b64_img), len(b64_img[0])))
-            time.sleep(.5)
+            time.sleep(.33)
             #return b64_img
             
 

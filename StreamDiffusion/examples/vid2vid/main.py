@@ -13,9 +13,27 @@ from utils.wrapper import StreamDiffusionWrapper
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+import argparse
+
+cli_parser = argparse.ArgumentParser()
+cli_parser.add_argument('-p', '--path', type=str,
+                    default="""H:/github/draw-realtime/StreamDiffusion/examples/vid2vid/video""",
+                    required=False,
+                    help='Path to the input video directory')
+
+cli_parser.add_argument('-m', '--mode',
+                        type=str,
+                        help='Execution Mode',
+                        default='2k',
+                        choices=['480p, 720p, 1080p, 2k, 4k'],
+                        required=False)
+
+args = cli_parser.parse_args()
+input_path = args.path
+
+
 
 def main(
-    input: str,
     output: str = os.path.join(CURRENT_DIR, "..", "..", "images", "outputs", "output.mp4"),
     #model_id: str = "KBlueLeaf/kohaku-v2.1",
     model_id: str = "stabilityai/sdxl-turbo",
@@ -33,8 +51,8 @@ def main(
 
     Parameters
     ----------
-    input : str, optional
-        The input video name to load images from.
+    input_path : str, optional
+        The input video path directory to load images from.
     output : str, optional
         The output video name to save images to.
     model_id_or_path : str
@@ -58,47 +76,56 @@ def main(
         The seed, by default 2. if -1, use random seed.
     """
 
-    video_info = read_video(input)
-    video = video_info[0] / 255
-    fps = video_info[2]["video_fps"]
-    width = int(video.shape[1] * scale)
-    height = int(video.shape[2] * scale)
+    #directory_path = "/home/ubuntu/videos"
+    #dir_path = """H:\github\draw-realtime\StreamDiffusion\examples\vid2vid\video"""
+    global input_path
+    dir_path = input_path
+    file_list = os.listdir(dir_path)
+    file_paths = [os.path.join(dir_path, file) for file in file_list]
 
-    stream = StreamDiffusionWrapper(
-        model_id_or_path=model_id,
-        lora_dict=lora_dict,
-        t_index_list=[35, 45],
-        frame_buffer_size=1,
-        width=width,
-        height=height,
-        use_tiny_vae=True, # TAESD
-        warmup=10,
-        acceleration=acceleration,
-        do_add_noise=False,
-        mode="img2img",
-        output_type="pt",
-        enable_similar_image_filter=enable_similar_image_filter,
-        similar_image_filter_threshold=0.98,
-        use_denoising_batch=use_denoising_batch,
-        seed=seed,
-    )
+    for x in file_paths:
+        #video_info = read_video(input_path)
+        video_info = read_video(x)
+        video = video_info[0] / 255
+        fps = video_info[2]["video_fps"]
+        width = int(video.shape[1] * scale)
+        height = int(video.shape[2] * scale)
 
-    stream.prepare(
-        prompt=prompt,
-        num_inference_steps=50,
-    )
+        stream = StreamDiffusionWrapper(
+            model_id_or_path=model_id,
+            lora_dict=lora_dict,
+            t_index_list=[35, 45],
+            frame_buffer_size=1,
+            width=width,
+            height=height,
+            use_tiny_vae=True, # TAESD
+            warmup=10,
+            acceleration=acceleration,
+            do_add_noise=False,
+            mode="img2img",
+            output_type="pt",
+            enable_similar_image_filter=enable_similar_image_filter,
+            similar_image_filter_threshold=0.98,
+            use_denoising_batch=use_denoising_batch,
+            seed=seed,
+        )
 
-    video_result = torch.zeros(video.shape[0], width, height, 3)
+        stream.prepare(
+            prompt=prompt,
+            num_inference_steps=50,
+        )
 
-    for _ in range(stream.batch_size):
-        stream(image=video[0].permute(2, 0, 1))
+        video_result = torch.zeros(video.shape[0], width, height, 3)
 
-    for i in tqdm(range(video.shape[0])):
-        output_image = stream(video[i].permute(2, 0, 1))
-        video_result[i] = output_image.permute(1, 2, 0)
+        for _ in range(stream.batch_size):
+            stream(image=video[0].permute(2, 0, 1))
 
-    video_result = video_result * 255
-    write_video(output, video_result[2:], fps=fps)
+        for i in tqdm(range(video.shape[0])):
+            output_image = stream(video[i].permute(2, 0, 1))
+            video_result[i] = output_image.permute(1, 2, 0)
+
+        video_result = video_result * 255
+        write_video(output, video_result[2:], fps=fps)
 
 
 if __name__ == "__main__":

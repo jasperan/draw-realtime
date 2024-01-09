@@ -39,7 +39,7 @@ def main(
     model_id: str = "stabilityai/sd-turbo",
     lora_dict: Optional[Dict[str, float]] = None,
     prompt: str = "painting picasso, full of color, detailed",
-    scale: float = 2.0,
+    scale: float = 1.0,
     acceleration: Literal["none", "xformers", "tensorrt"] = "tensorrt",
     use_denoising_batch: bool = True,
     enable_similar_image_filter: bool = True,
@@ -82,6 +82,8 @@ def main(
     dir_path = input_path
     file_list = os.listdir(dir_path)
     file_paths = [os.path.join(dir_path, file) for file in file_list]
+
+    print(file_paths)
 
     for x in file_paths:
         #video_info = read_video(input_path)

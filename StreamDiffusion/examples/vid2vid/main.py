@@ -36,7 +36,7 @@ input_path = args.path
 def main(
     output: str = os.path.join(CURRENT_DIR, "..", "..", "images", "outputs", "output.mp4"),
     #model_id: str = "KBlueLeaf/kohaku-v2.1",
-    model_id: str = "stabilityai/sdxl-turbo",
+    model_id: str = "stabilityai/sd-turbo",
     lora_dict: Optional[Dict[str, float]] = None,
     prompt: str = "painting picasso, full of color, detailed",
     scale: float = 2.0,

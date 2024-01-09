@@ -49,7 +49,7 @@ def screen(
         
         s.mount('http://', HTTPAdapter(max_retries=retries))
 
-        response = s.get('http://127.0.0.1:8000')
+        response = s.get('http://127.0.0.1:55555')
         #print(response.text)
         data = response.json()
         assert type(data) == type(list())
@@ -247,7 +247,10 @@ def main(
     lora_dict: Optional[Dict[str, float]] = None,
     #prompt: str = "1girl with brown dog hair, thick glasses, smiling",
     #prompt: str = "1girl, anime, detailed, intricate, full of colour, cinematic lighting, trending on artstation, 8k, hyperrealistic, focused, extreme details",
-    prompt: str = "landscape, detailed, intricate, full of colour, cinematic lighting, trending on artstation, 8k, hyperrealistic, focused, extreme details",
+    #prompt: str = "landscape, detailed, intricate, full of colour, cinematic lighting, trending on artstation, 8k, hyperrealistic, focused, extreme details",
+    #prompt: str = "picasso style",
+    #prompt: str = "anime",
+    prompt: str = "painting picasso, full of color, detailed",
     negative_prompt: str = "low quality, bad quality, blurry, low resolution, pixelated, pixel art, low fidelity",
     frame_buffer_size: int = 1,
     width: int = 512,

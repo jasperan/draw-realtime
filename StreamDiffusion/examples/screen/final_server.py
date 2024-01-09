@@ -83,7 +83,7 @@ def screen(
             #mutex.release()
 
             print('Buffer Length: {} | Image 1 Length: {}'.format(len(b64_img), len(b64_img[0])))
-            time.sleep(.33)
+            time.sleep(0)
             #return b64_img
             
 
@@ -169,7 +169,7 @@ async def root():
     return returner
 
 def run_uvicorn():
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=55555)
     
 if __name__ == "__main__":
     uvicorn_thread = threading.Thread(target=run_uvicorn)

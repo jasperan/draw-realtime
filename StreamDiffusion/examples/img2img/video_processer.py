@@ -53,6 +53,7 @@ def screen(path):
         print('Frame {}'.format(count))
 
 def main(
+    pathy: str,
     input: str = os.path.join(CURRENT_DIR, "..", "..", "images", "inputs", "input.png"),
     output: str = os.path.join(CURRENT_DIR, "..", "..", "images", "outputs", "output.png"),
     model_id_or_path: str = "stabilityai/sd-turbo",
@@ -111,10 +112,11 @@ def main(
     global count
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('-p', '--path', type=str, help='Path to the video file', required=True,
+    parser.add_argument('-p', '--path', type=str, help='Path to the video file(s)', required=True,
                         default='../vid2vid/video/video.mp4')
     args = parser.parse_args()
-    screen(args.path) # process video first
+
+    screen(pathy) # process video first
 
     if guidance_scale <= 1.0:
         cfg_type = "none"

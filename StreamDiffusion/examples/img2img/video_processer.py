@@ -56,7 +56,7 @@ def screen(path):
         count += 1
         #print(type(pil_img))
         #inputs.append(pil2tensor(pil_img))
-        print('{}%').format((count/length) * 100)
+        print('{}%'.format((count/length) * 100))
 
 def main(
     pathy: str,

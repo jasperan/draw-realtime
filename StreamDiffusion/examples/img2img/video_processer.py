@@ -35,8 +35,8 @@ def create_video(image_folder: str, video_name: str):
     clip.write_videofile('./output/{}.mp4'.format(video_name))
 
     import shutil
-    shutil.rmtree('/tmp/frames/')
-    shutil.rmtree('/tmp/processed/')
+    shutil.rmtree('./tmp/frames/')
+    shutil.rmtree('./tmp/processed/')
 
 
 def screen(path):

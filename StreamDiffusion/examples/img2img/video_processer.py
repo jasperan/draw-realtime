@@ -35,8 +35,8 @@ def create_video(image_folder: str):
     clip.write_videofile('./output/my_video.mp4')
 
 
-def screen():
-    vidcap = cv2.VideoCapture('../vid2vid/video/video.mp4')
+def screen(path):
+    vidcap = cv2.VideoCapture(path)
     success,image = vidcap.read()
     global count
     count = 0
@@ -109,7 +109,12 @@ def main(
     """
 
     global count
-    screen() # process video first
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-p', '--path', type=str, help='Path to the video file', required=True,
+                        default='../vid2vid/video/video.mp4')
+    args = parser.parse_args()
+    screen(args.path) # process video first
 
     if guidance_scale <= 1.0:
         cfg_type = "none"

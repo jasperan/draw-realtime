@@ -18,6 +18,18 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 count: int = 0
 
+def cleanup_dir(dir: str):
+    for filename in os.listdir(dir):
+        file_path = os.path.join(dir, filename)
+        try:
+            if os.path.isfile(file_path) or os.path.islink(file_path):
+                os.unlink(file_path)
+            elif os.path.isdir(file_path):
+                shutil.rmtree(file_path)
+            print('Deleted {}'.format(file_path))        
+        except Exception as e:
+            print('Failed to delete %s. Reason: %s' % (file_path, e))
+
 def create_video(image_folder: str, video_name: str):
     """
     Process for generating images based on a prompt using a specified model.
@@ -35,16 +47,10 @@ def create_video(image_folder: str, video_name: str):
     clip = moviepy.video.io.ImageSequenceClip.ImageSequenceClip(image_files, fps=fps)
     clip.write_videofile('./output/{}'.format(video_name))
 
-    for filename in os.listdir('./tmp/frames/') or os.listdir('./tmp/processed/'):
-        file_path = os.path.join('dir', filename)
-        try:
-            if os.path.isfile(file_path) or os.path.islink(file_path):
-                os.unlink(file_path)
-            elif os.path.isdir(file_path):
-                shutil.rmtree(file_path)
-            print('Deleted {}'.format(file_path))        
-        except Exception as e:
-            print('Failed to delete %s. Reason: %s' % (file_path, e))
+    # cleanup directories
+    cleanup_dir('./tmp/processed/')
+    cleanup_dir('./tmp/frames/')
+
 
 
 

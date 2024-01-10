@@ -17,7 +17,7 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 count: int = 0
 
-def create_video(image_folder: str):
+def create_video(image_folder: str, video_name: str):
     """
     Process for generating images based on a prompt using a specified model.
 
@@ -32,7 +32,7 @@ def create_video(image_folder: str):
                 for img in os.listdir(image_folder)
                 if img.endswith(".jpg")]
     clip = moviepy.video.io.ImageSequenceClip.ImageSequenceClip(image_files, fps=fps)
-    clip.write_videofile('./output/my_video.mp4')
+    clip.write_videofile('./output/{}.mp4'.format(video_name))
 
 
 def screen(path):
@@ -160,7 +160,7 @@ def main(
 
         output_image.save('./tmp/processed/frame_{}.jpg'.format(x))
 
-    create_video("./tmp/processed")
+    create_video("./tmp/processed", pathy)
     
 
 

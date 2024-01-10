@@ -5,6 +5,8 @@ import cv2
 from PIL import Image
 import fire
 import moviepy.video.io.ImageSequenceClip
+import warnings
+warnings.filterwarnings("ignore")
 
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))

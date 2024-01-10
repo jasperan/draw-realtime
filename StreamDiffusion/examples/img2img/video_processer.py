@@ -59,7 +59,8 @@ def screen(path):
         print('[{}/{}]: {}%'.format(count, length, ((count/length) * 100)))
 
 def main(
-    pathy: str,
+    pathy: str = "../vid2vid/video/video.mp4",
+    file: str = "video.mp4",
     input: str = os.path.join(CURRENT_DIR, "..", "..", "images", "inputs", "input.png"),
     output: str = os.path.join(CURRENT_DIR, "..", "..", "images", "outputs", "output.png"),
     model_id_or_path: str = "stabilityai/sd-turbo",
@@ -166,7 +167,7 @@ def main(
 
         output_image.save('./tmp/processed/frame_{}.jpg'.format(x))
 
-    create_video("./tmp/processed", pathy)
+    create_video("./tmp/processed", file)
     
 
 

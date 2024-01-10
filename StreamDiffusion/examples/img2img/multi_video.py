@@ -7,8 +7,8 @@ def run_main():
     dir = '../vid2vid/video/'
     for file in os.listdir(dir):
         print(file)
-        video_processer.main('{}{}'.format(dir, file))
-        thread = threading.Thread(target=video_processer.main, args=('{}{}'.format(dir, file)))
-        thread.start()
+        video_processer.main(pathy=dir, file=file)
+        #thread = threading.Thread(target=video_processer.main, args=(pathy=dir, file=file)))
+        #thread.start()
 
 run_main()

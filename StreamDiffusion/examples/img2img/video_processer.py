@@ -123,7 +123,7 @@ def main(
     #                    default='../vid2vid/video/video.mp4')
     #args = parser.parse_args()
 
-    screen(pathy) # process video first
+    screen(pathy+file) # process video first
 
     if guidance_scale <= 1.0:
         cfg_type = "none"

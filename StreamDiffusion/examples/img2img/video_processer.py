@@ -41,6 +41,7 @@ def create_video(image_folder: str, video_name: str):
 
 def screen(path):
     vidcap = cv2.VideoCapture(path)
+    length = int(vidcap.get(cv2.cv.CV_CAP_PROP_FRAME_COUNT))
     success,image = vidcap.read()
     global count
     count = 0
@@ -54,7 +55,7 @@ def screen(path):
         count += 1
         #print(type(pil_img))
         #inputs.append(pil2tensor(pil_img))
-        print('Frame {}'.format(count))
+        print('{}%').format((count/length) * 100)
 
 def main(
     pathy: str,

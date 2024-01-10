@@ -6,6 +6,7 @@ from PIL import Image
 import fire
 import moviepy.video.io.ImageSequenceClip
 import warnings
+import shutil
 warnings.filterwarnings("ignore")
 
 
@@ -34,9 +35,16 @@ def create_video(image_folder: str, video_name: str):
     clip = moviepy.video.io.ImageSequenceClip.ImageSequenceClip(image_files, fps=fps)
     clip.write_videofile('./output/{}.mp4'.format(video_name))
 
-    import shutil
-    shutil.rmtree('./tmp/frames/')
-    shutil.rmtree('./tmp/processed/')
+    for filename in os.listdir('./tmp/frames/') or os.listdir('./tmp/processed/'):
+        file_path = os.path.join('dir', filename)
+        try:
+            if os.path.isfile(file_path) or os.path.islink(file_path):
+                os.unlink(file_path)
+            elif os.path.isdir(file_path):
+                shutil.rmtree(file_path)
+        except Exception as e:
+            print('Failed to delete %s. Reason: %s' % (file_path, e))
+
 
 
 def screen(path):

@@ -42,6 +42,7 @@ def create_video(image_folder: str, video_name: str):
 def screen(path):
     vidcap = cv2.VideoCapture(path)
     length = int(vidcap.get(cv2.CAP_PROP_FRAME_COUNT))
+    print(length)
     success,image = vidcap.read()
     global count
     count = 0

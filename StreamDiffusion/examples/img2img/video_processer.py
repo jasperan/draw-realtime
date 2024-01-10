@@ -34,6 +34,10 @@ def create_video(image_folder: str, video_name: str):
     clip = moviepy.video.io.ImageSequenceClip.ImageSequenceClip(image_files, fps=fps)
     clip.write_videofile('./output/{}.mp4'.format(video_name))
 
+    import shutil
+    shutil.rmtree('/tmp/frames/')
+    shutil.rmtree('/tmp/processed/')
+
 
 def screen(path):
     vidcap = cv2.VideoCapture(path)

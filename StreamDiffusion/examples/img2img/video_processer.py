@@ -111,10 +111,10 @@ def main(
 
     global count
     import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-p', '--path', type=str, help='Path to the video file(s)', required=True,
-                        default='../vid2vid/video/video.mp4')
-    args = parser.parse_args()
+    #parser = argparse.ArgumentParser()
+    #parser.add_argument('-p', '--path', type=str, help='Path to the video file(s)', required=True,
+    #                    default='../vid2vid/video/video.mp4')
+    #args = parser.parse_args()
 
     screen(pathy) # process video first
 

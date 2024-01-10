@@ -56,7 +56,7 @@ def screen(path):
         count += 1
         #print(type(pil_img))
         #inputs.append(pil2tensor(pil_img))
-        print('[{}/{}]: {}%'.format(count, length, ((count/length) * 100)))
+        print('[DECOMPOSE][{}/{}]: {}%'.format(count, length, ((count/length) * 100)))
 
 def main(
     pathy: str = "../vid2vid/video/video.mp4",
@@ -163,7 +163,7 @@ def main(
             stream(image=image_tensor)
         
         output_image = stream(image=image_tensor)
-        #print(type(output_image))
+        print('[SD][{}/{}]: {}%'.format(x, count, ((x/count) * 100)))
 
         output_image.save('./tmp/processed/frame_{}.jpg'.format(x))
 

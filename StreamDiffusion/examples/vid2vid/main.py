@@ -118,7 +118,7 @@ def main(
 
     for i in tqdm(range(video.shape[0])):
         output_image = stream(video[i].permute(2, 0, 1))
-        video_result[i] = output_image.permute(1, 2, 0)
+        video_result[i] = output_image.permute(2, 1, 0)
 
     video_result = video_result * 255
     write_video(output, video_result[2:], fps=fps)

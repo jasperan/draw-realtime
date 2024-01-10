@@ -3,8 +3,8 @@ import video_processer
 
 def run_main():
     import os
-    #dir = '/home/ubuntu/videos/'
-    dir = '../vid2vid/video/'
+    dir = '/home/ubuntu/videos/'
+    #dir = '../vid2vid/video/'
     for file in os.listdir(dir):
         print(file)
         video_processer.main(pathy=dir, file=file)

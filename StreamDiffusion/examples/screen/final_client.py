@@ -43,7 +43,7 @@ def screen(
         # this works img = Image.open("img/forgh3.jpg")
         global global_img
         s = requests.Session()
-        retries = Retry(total=5,
+        retries = Retry(total=2,
                 backoff_factor=1,
                 status_forcelist=[429, 500, 502, 503, 504])
         
@@ -275,8 +275,8 @@ def main(
         print(f" [x] Received {body}")
         global_img = body
 
-    start_server = websockets.serve(callback, "localhost", 8001)
-    asyncio.get_event_loop().run_until_complete(start_server)
+    #start_server = websockets.serve(callback, "localhost", 8001)
+    #asyncio.get_event_loop().run_until_complete(start_server)
 
 
     monitor = dummy_screen(1024, 1024)

@@ -1,7 +1,7 @@
 import os
 import sys
 from typing import Literal, Dict, Optional
-
+import cv2
 import fire
 import torch
 from torchvision.io import read_video, write_video

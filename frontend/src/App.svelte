@@ -4,6 +4,7 @@
   // State
   let settings: any = null;
   let selectedModel = '';
+  let selectedPreset = '';
   let prompt = '';
 
   // Video sources
@@ -41,12 +42,26 @@
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   }
 
+  // Handle preset selection
+  function selectPreset(presetKey: string) {
+    selectedPreset = presetKey;
+    if (settings.presets && settings.presets[presetKey]) {
+      prompt = settings.presets[presetKey].prompt;
+    }
+  }
+
   onMount(async () => {
     // Load settings
     const res = await fetch('/api/settings');
     settings = await res.json();
     selectedModel = settings.default_model;
-    prompt = settings.default_prompt;
+    selectedPreset = settings.default_preset;
+    // Set initial prompt from default preset
+    if (settings.presets && settings.presets[selectedPreset]) {
+      prompt = settings.presets[selectedPreset].prompt;
+    } else {
+      prompt = settings.default_prompt;
+    }
 
     // Load server videos
     const videosRes = await fetch('/api/videos');
@@ -294,16 +309,41 @@
   </header>
 
   <div class="container">
+    <!-- Real-time Frame Comparison (during processing) -->
+    {#if isProcessing && previewInputUrl && previewOutputUrl}
+      <div class="realtime-comparison">
+        <h3>Real-time Processing Preview</h3>
+        <div class="comparison-grid">
+          <div class="comparison-frame">
+            <span class="frame-title">Original Frame</span>
+            <img src={previewInputUrl} alt="Original frame" />
+          </div>
+          <div class="comparison-arrow">→</div>
+          <div class="comparison-frame">
+            <span class="frame-title">Generated Frame</span>
+            <img src={previewOutputUrl} alt="Generated frame" />
+          </div>
+        </div>
+        <div class="comparison-stats">
+          <span>Frame {currentJob?.current_frame || 0} / {currentJob?.total_frames || 0}</span>
+          <span class="separator">|</span>
+          <span>{currentJob?.processing_fps || 0} fps</span>
+          <span class="separator">|</span>
+          <span>ETA: {formatTime(currentJob?.eta_seconds || 0)}</span>
+          <span class="separator">|</span>
+          <span class="progress-text">{(currentJob?.progress || 0).toFixed(1)}%</span>
+        </div>
+        <div class="progress-container large">
+          <div class="progress-bar" style="width: {currentJob?.progress || 0}%"></div>
+        </div>
+      </div>
+    {/if}
+
     <!-- Video Comparison -->
     <div class="video-grid">
       <div class="video-box">
         <h3>Input Video</h3>
-        {#if isProcessing && previewInputUrl}
-          <div class="placeholder processing">
-            <img src={previewInputUrl} alt="Input frame" class="preview-frame" />
-            <div class="frame-label">Frame {currentJob?.current_frame || 0}</div>
-          </div>
-        {:else if inputVideoUrl}
+        {#if inputVideoUrl}
           <video
             bind:this={inputVideoEl}
             src={inputVideoUrl}
@@ -332,23 +372,12 @@
             on:pause={handleOutputPause}
             on:seeked={handleOutputSeek}
           ></video>
-        {:else if isProcessing && currentJob}
-          <div class="placeholder processing">
-            {#if previewOutputUrl}
-              <img src={previewOutputUrl} alt="Processing preview" class="preview-frame" />
-            {/if}
-            <div class="progress-overlay">
-              <div class="progress-container">
-                <div class="progress-bar" style="width: {currentJob.progress}%"></div>
-              </div>
-              <div class="progress-stats">
-                <span>{currentJob.current_frame} / {currentJob.total_frames} frames</span>
-                <span class="progress-percent">{currentJob.progress.toFixed(1)}%</span>
-              </div>
-              <div class="progress-stats">
-                <span>{currentJob.processing_fps} fps</span>
-                <span class="eta">ETA: {formatTime(currentJob.eta_seconds)}</span>
-              </div>
+        {:else if isProcessing}
+          <div class="placeholder processing-placeholder">
+            <div class="processing-indicator">
+              <div class="spinner"></div>
+              <span>Processing in progress...</span>
+              <span class="processing-detail">See real-time preview above</span>
             </div>
           </div>
         {:else}
@@ -420,9 +449,27 @@
         </div>
       </div>
 
+      <!-- Style Preset -->
+      <div class="control-group">
+        <label>Style Preset</label>
+        <div class="preset-grid">
+          {#if settings?.presets}
+            {#each Object.entries(settings.presets) as [key, preset]}
+              <button
+                class="preset-btn"
+                class:active={selectedPreset === key}
+                on:click={() => selectPreset(key)}
+              >
+                {preset.description}
+              </button>
+            {/each}
+          {/if}
+        </div>
+      </div>
+
       <!-- Prompt -->
       <div class="control-group">
-        <label>Prompt</label>
+        <label>Prompt (editable)</label>
         <input
           type="text"
           bind:value={prompt}
@@ -637,6 +684,142 @@
   .placeholder.processing {
     position: relative;
     padding: 0;
+  }
+
+  .preset-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 8px;
+  }
+
+  .preset-btn {
+    background: #1f2937;
+    border: 1px solid #374151;
+    color: #ccc;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: all 0.2s;
+    text-align: center;
+  }
+
+  .preset-btn:hover {
+    background: #374151;
+    color: #fff;
+  }
+
+  .preset-btn.active {
+    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+    border-color: #60a5fa;
+    color: #fff;
+    font-weight: 500;
+  }
+
+  /* Real-time Comparison Section */
+  .realtime-comparison {
+    background: linear-gradient(135deg, #1e3a5f, #16213e);
+    border: 2px solid #3b82f6;
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+
+  .realtime-comparison h3 {
+    text-align: center;
+    color: #60a5fa;
+    margin: 0 0 16px 0;
+    font-size: 1.1rem;
+  }
+
+  .comparison-grid {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+  }
+
+  .comparison-frame {
+    flex: 1;
+    max-width: 400px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .comparison-frame img {
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: contain;
+    border-radius: 8px;
+    background: #0f0f1a;
+  }
+
+  .frame-title {
+    font-size: 0.85rem;
+    color: #888;
+    text-align: center;
+  }
+
+  .comparison-arrow {
+    font-size: 2rem;
+    color: #60a5fa;
+    padding: 0 10px;
+  }
+
+  .comparison-stats {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+    margin-top: 16px;
+    color: #ccc;
+    font-size: 0.9rem;
+  }
+
+  .separator {
+    color: #444;
+  }
+
+  .progress-text {
+    color: #60a5fa;
+    font-weight: 600;
+  }
+
+  .progress-container.large {
+    margin-top: 12px;
+    height: 10px;
+  }
+
+  /* Processing indicator */
+  .processing-placeholder {
+    background: #0f0f1a;
+  }
+
+  .processing-indicator {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    color: #60a5fa;
+  }
+
+  .processing-detail {
+    font-size: 0.8rem;
+    color: #666;
+  }
+
+  .spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid #1f2937;
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 
   .playback-controls {

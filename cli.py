@@ -5,10 +5,12 @@ StreamDiffusion Video-to-Video CLI
 Transform videos with AI-powered diffusion from the command line.
 
 Usage:
-    python cli.py input.mp4 -o output.mp4 -p "cyberpunk style"
-    python cli.py input.mp4 --model sd15-lcm --prompt "oil painting"
+    python cli.py input.mp4 -s anime-ghibli
+    python cli.py input.mp4 --style cyberpunk-neon --model sd15-lcm
+    python cli.py input.mp4 -p "custom prompt here"
+    python cli.py --list-styles
     python cli.py --list-videos
-    python cli.py --process-all -p "anime style"
+    python cli.py --process-all -s oil-painting
 """
 
 import argparse
@@ -29,7 +31,7 @@ from rich import print as rprint
 # Add project to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from app.config import config, MODELS, DEFAULT_MODEL, DEFAULT_PROMPT
+from app.config import config, MODELS, DEFAULT_MODEL, DEFAULT_PROMPT, PROMPT_PRESETS, DEFAULT_PRESET
 from app.video_source import get_available_videos, get_video_path
 
 console = Console()
@@ -51,6 +53,20 @@ def list_models():
     for key, model in MODELS.items():
         default = "✓" if key == DEFAULT_MODEL else ""
         table.add_row(key, model.description, default)
+
+    console.print(table)
+
+
+def list_styles():
+    """List available style presets."""
+    table = Table(title="Available Style Presets")
+    table.add_column("Key", style="cyan")
+    table.add_column("Description", style="green")
+    table.add_column("Default", style="yellow")
+
+    for key, preset in PROMPT_PRESETS.items():
+        default = "✓" if key == DEFAULT_PRESET else ""
+        table.add_row(key, preset.description, default)
 
     console.print(table)
 
@@ -233,11 +249,13 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s input.mp4 -o output.mp4 -p "cyberpunk style"
-  %(prog)s video.mp4 --model sd15-lcm --prompt "oil painting"
+  %(prog)s input.mp4 -s anime-ghibli              # Use anime style preset
+  %(prog)s input.mp4 -s oil-painting -m sd15-lcm  # Higher quality model
+  %(prog)s input.mp4 -p "custom prompt here"      # Custom prompt
+  %(prog)s --list-styles                          # Show all style presets
   %(prog)s --list-videos
   %(prog)s --list-models
-  %(prog)s --process-all -p "anime style, studio ghibli"
+  %(prog)s --process-all -s fantasy               # Process all with fantasy style
         """
     )
 
@@ -252,8 +270,14 @@ Examples:
     )
     parser.add_argument(
         "-p", "--prompt",
-        default=DEFAULT_PROMPT,
-        help=f"Style prompt (default: '{DEFAULT_PROMPT}')"
+        default=None,
+        help="Custom style prompt (overrides --style)"
+    )
+    parser.add_argument(
+        "-s", "--style",
+        choices=list(PROMPT_PRESETS.keys()),
+        default=DEFAULT_PRESET,
+        help=f"Style preset (default: {DEFAULT_PRESET})"
     )
     parser.add_argument(
         "-m", "--model",
@@ -272,6 +296,11 @@ Examples:
         help="List available models"
     )
     parser.add_argument(
+        "--list-styles",
+        action="store_true",
+        help="List available style presets"
+    )
+    parser.add_argument(
         "--process-all",
         action="store_true",
         help="Process all server videos"
@@ -288,16 +317,26 @@ Examples:
         list_models()
         return
 
+    if args.list_styles:
+        list_styles()
+        return
+
+    # Determine prompt: custom prompt takes priority, otherwise use style preset
+    if args.prompt:
+        prompt = args.prompt
+    else:
+        prompt = PROMPT_PRESETS[args.style].prompt
+
     # Handle processing commands
     if args.process_all:
-        process_all_videos(prompt=args.prompt, model=args.model)
+        process_all_videos(prompt=prompt, model=args.model)
         return
 
     if args.input:
         success = process_video(
             input_path=args.input,
             output_path=args.output,
-            prompt=args.prompt,
+            prompt=prompt,
             model=args.model,
         )
         sys.exit(0 if success else 1)

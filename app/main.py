@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from app.config import config, MODELS, DEFAULT_MODEL, DEFAULT_PROMPT
+from app.config import config, MODELS, DEFAULT_MODEL, DEFAULT_PROMPT, PROMPT_PRESETS, DEFAULT_PRESET
 from app.pipeline import get_pipeline
 from app.video_source import get_available_videos, get_video_path, VideoSource
 from app.video_processor import get_processor, JobStatus
@@ -46,6 +46,8 @@ class SettingsResponse(BaseModel):
     models: dict
     default_model: str
     default_prompt: str
+    presets: dict
+    default_preset: str
     width: int
     height: int
 
@@ -76,10 +78,17 @@ class App:
         async def get_settings() -> SettingsResponse:
             """Get application settings."""
             pipeline = get_pipeline()
+            # Build presets dict with prompt and description
+            presets = {
+                key: {"prompt": preset.prompt, "description": preset.description}
+                for key, preset in PROMPT_PRESETS.items()
+            }
             return SettingsResponse(
                 models=pipeline.get_available_models(),
                 default_model=DEFAULT_MODEL,
                 default_prompt=DEFAULT_PROMPT,
+                presets=presets,
+                default_preset=DEFAULT_PRESET,
                 width=config.width,
                 height=config.height,
             )

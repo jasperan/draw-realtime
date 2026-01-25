@@ -102,10 +102,30 @@ To add server-side videos, drop MP4 files in the `videos/` directory.
 |-------|-------|---------|-------|
 | **SD-Turbo** | Fast | Good | Default, single-step inference |
 | **SD 1.5 + LCM** | Medium | Higher | 4-step inference with LCM-LoRA |
+| **Hyper-SDXL** | Fastest | SDXL | 1-step SDXL with Hyper-SD LoRA |
 
-### Prompts
+### Style Presets
 
-Enter any text prompt to change the style. Examples:
+Choose from 12 built-in style presets:
+
+| Preset | Description |
+|--------|-------------|
+| `anime-ghibli` | Studio Ghibli inspired, soft colors |
+| `anime-cyberpunk` | Anime + cyberpunk, neon, Makoto Shinkai |
+| `cyberpunk-neon` | Cyberpunk city, neon lights, rain |
+| `oil-painting` | Classical oil painting, rich colors |
+| `watercolor` | Soft watercolor, flowing colors |
+| `fantasy` | Magical fantasy art, ethereal |
+| `dark-gothic` | Dark gothic, moody atmosphere |
+| `comic-pop` | Comic book / pop art style |
+| `photorealistic` | Ultra-detailed photorealistic |
+| `impressionist` | Impressionist painting, Monet style |
+| `pixel-art` | 16-bit retro pixel art |
+| `sketch` | Pencil sketch, detailed linework |
+
+### Custom Prompts
+
+You can also enter custom prompts. Examples:
 - `cyberpunk robot, neon lights, highly detailed`
 - `oil painting, impressionist style, vibrant colors`
 - `anime character, studio ghibli style`
@@ -141,6 +161,29 @@ draw-realtime/
 └── start.sh               # Launch script
 ```
 
+## CLI Usage
+
+Process videos from the command line:
+
+```bash
+# Use a style preset
+python cli.py input.mp4 -s anime-ghibli
+
+# Use higher quality model with preset
+python cli.py input.mp4 -s oil-painting -m sd15-lcm
+
+# Custom prompt
+python cli.py input.mp4 -p "your custom prompt here"
+
+# Process all server videos
+python cli.py --process-all -s fantasy
+
+# List available options
+python cli.py --list-styles
+python cli.py --list-models
+python cli.py --list-videos
+```
+
 ## API Endpoints
 
 | Endpoint | Method | Description |
@@ -153,6 +196,7 @@ draw-realtime/
 | `/api/jobs` | GET | List all jobs |
 | `/api/output/{file}` | GET | Download processed video |
 | `/api/input/{file}` | GET | Download input video |
+| `/api/preview/{file}` | GET | Get real-time preview frame |
 
 ## Performance
 

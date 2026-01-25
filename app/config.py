@@ -10,6 +10,9 @@ class ModelConfig(BaseModel):
     id: str
     use_lcm_lora: bool = False
     description: str = ""
+    pipeline_type: Literal["streamdiffusion", "diffusers"] = "streamdiffusion"
+    lora_id: str = ""  # Optional LoRA to load
+    num_inference_steps: int = 1  # For diffusers pipeline
 
 
 # Available model presets
@@ -17,12 +20,22 @@ MODELS: Dict[str, ModelConfig] = {
     "sd-turbo": ModelConfig(
         id="stabilityai/sd-turbo",
         use_lcm_lora=False,
-        description="SD-Turbo (fast, lower quality)"
+        description="SD-Turbo (fast, lower quality)",
+        pipeline_type="streamdiffusion",
     ),
     "sd15-lcm": ModelConfig(
         id="runwayml/stable-diffusion-v1-5",
         use_lcm_lora=True,
-        description="SD 1.5 + LCM-LoRA (slower, higher quality)"
+        description="SD 1.5 + LCM-LoRA (slower, higher quality)",
+        pipeline_type="streamdiffusion",
+    ),
+    "hyper-sdxl": ModelConfig(
+        id="stabilityai/stable-diffusion-xl-base-1.0",
+        use_lcm_lora=False,
+        description="Hyper-SDXL 1-step (fastest, SDXL quality)",
+        pipeline_type="diffusers",
+        lora_id="ByteDance/Hyper-SD",
+        num_inference_steps=1,
     ),
 }
 
@@ -69,3 +82,64 @@ config = AppConfig(
 # Default prompts
 DEFAULT_PROMPT = "masterpiece, best quality, highly detailed"
 DEFAULT_NEGATIVE_PROMPT = "blurry, low quality, distorted"
+
+
+class PromptPreset(BaseModel):
+    """A preset prompt with name and description."""
+    prompt: str
+    description: str
+
+
+# Preset prompts for different styles
+PROMPT_PRESETS: Dict[str, PromptPreset] = {
+    "anime-ghibli": PromptPreset(
+        prompt="anime style, studio ghibli inspired, soft colors, whimsical, magical atmosphere, hand-drawn, beautiful scenery, masterpiece",
+        description="Anime - Studio Ghibli"
+    ),
+    "anime-cyberpunk": PromptPreset(
+        prompt="anime cyberpunk style, neon lights, futuristic city, makoto shinkai inspired, vibrant colors, detailed, cinematic lighting",
+        description="Anime - Cyberpunk"
+    ),
+    "cyberpunk-neon": PromptPreset(
+        prompt="cyberpunk neon city, futuristic, rain, neon lights reflecting on wet streets, high tech, vibrant colors, highly detailed",
+        description="Cyberpunk Neon City"
+    ),
+    "oil-painting": PromptPreset(
+        prompt="oil painting style, classical art, rich colors, visible brushstrokes, dramatic lighting, renaissance inspired, masterpiece",
+        description="Oil Painting - Classical"
+    ),
+    "watercolor": PromptPreset(
+        prompt="watercolor painting, soft edges, flowing colors, artistic, delicate, paper texture, impressionist style, beautiful",
+        description="Watercolor Painting"
+    ),
+    "fantasy": PromptPreset(
+        prompt="fantasy art style, magical, ethereal lighting, intricate details, epic, mystical atmosphere, trending on artstation",
+        description="Fantasy Art"
+    ),
+    "dark-gothic": PromptPreset(
+        prompt="dark gothic style, dramatic shadows, moody atmosphere, dark fantasy, cinematic, muted colors, haunting, detailed",
+        description="Dark Gothic"
+    ),
+    "comic-pop": PromptPreset(
+        prompt="comic book style, pop art, bold colors, thick outlines, halftone dots, dynamic, vibrant, graphic novel aesthetic",
+        description="Comic / Pop Art"
+    ),
+    "photorealistic": PromptPreset(
+        prompt="photorealistic, ultra detailed, 8k, professional photography, sharp focus, natural lighting, hyperrealistic",
+        description="Photorealistic"
+    ),
+    "impressionist": PromptPreset(
+        prompt="impressionist painting style, visible brushstrokes, light and color, monet inspired, dreamy, soft focus, artistic",
+        description="Impressionist"
+    ),
+    "pixel-art": PromptPreset(
+        prompt="pixel art style, 16-bit, retro gaming aesthetic, vibrant colors, clean pixels, nostalgic, detailed sprites",
+        description="Pixel Art / Retro"
+    ),
+    "sketch": PromptPreset(
+        prompt="pencil sketch, hand-drawn, detailed linework, crosshatching, artistic, monochrome, professional illustration",
+        description="Pencil Sketch"
+    ),
+}
+
+DEFAULT_PRESET = "cyberpunk-neon"

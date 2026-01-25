@@ -165,6 +165,9 @@ cython_debug/
 # Node modules (general)
 node_modules/
 
+# Frontend build output
+frontend/build/
+
 # Claude Code files
 .claude/
 CLAUDE.md

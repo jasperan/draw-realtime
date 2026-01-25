@@ -1,0 +1,33 @@
+# StreamDiffusion Real-Time Demo Requirements
+# Install with: pip install -r requirements.txt
+
+# Core
+torch==2.1.0
+torchvision==0.16.0
+xformers
+
+# StreamDiffusion (install separately)
+# pip install git+https://github.com/cumulo-autumn/StreamDiffusion.git@main#egg=streamdiffusion[tensorrt]
+
+# Diffusion
+diffusers==0.24.0
+transformers==4.36.0
+accelerate==0.25.0
+huggingface_hub==0.20.3
+
+# Web
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+python-multipart
+websockets
+pydantic>=2.0.0
+markdown2
+
+# Vision
+opencv-python-headless
+Pillow
+
+# Utils
+numpy<2
+fire
+omegaconf

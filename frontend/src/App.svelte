@@ -33,6 +33,7 @@
   let previewInputUrl = '';
   let previewOutputUrl = '';
   let previewTimestamp = 0;
+  let lastPreviewFrame = -1;  // Track last frame to avoid unnecessary updates
 
   // Format seconds to MM:SS
   function formatTime(seconds: number): string {
@@ -128,6 +129,7 @@
     isProcessing = true;
     currentJob = null;
     outputVideoUrl = '';
+    lastPreviewFrame = -1;  // Reset for new job
 
     const formData = new FormData();
     formData.append('prompt', prompt);
@@ -178,11 +180,16 @@
 
         currentJob = await res.json();
 
-        // Update real-time preview frames with cache-busting
+        // Update real-time preview frames only when frame changes (every 10 frames on backend)
+        // This prevents NS_BINDING_ABORTED errors from rapid URL changes
         if (currentJob.status === 'processing' && currentJob.preview_frame && currentJob.input_frame) {
-          previewTimestamp = Date.now();
-          previewInputUrl = `/api/preview/${currentJob.input_frame}?t=${previewTimestamp}`;
-          previewOutputUrl = `/api/preview/${currentJob.preview_frame}?t=${previewTimestamp}`;
+          const currentFrame = Math.floor(currentJob.current_frame / 10) * 10;
+          if (currentFrame !== lastPreviewFrame) {
+            lastPreviewFrame = currentFrame;
+            previewTimestamp = Date.now();
+            previewInputUrl = `/api/preview/${currentJob.input_frame}?t=${previewTimestamp}`;
+            previewOutputUrl = `/api/preview/${currentJob.preview_frame}?t=${previewTimestamp}`;
+          }
         }
 
         if (currentJob.status === 'completed') {

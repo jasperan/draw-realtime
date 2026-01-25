@@ -161,3 +161,61 @@ cython_debug/
 
 ./StreamDiffusion/demo/realtime-img2img/frontend/node_modules/
 ./StreamDiffusion/demo/realtime-txt2img/frontend/node_modules/
+
+# Node modules (general)
+node_modules/
+
+# Claude Code files
+.claude/
+CLAUDE.md
+.claudeignore
+
+# Serena MCP files
+.serena/
+
+# Design docs (local only)
+docs/plans/
+
+# TensorRT engines (large, machine-specific)
+engines/
+*.engine
+*.onnx
+*.opt.onnx
+
+# Model weights and checkpoints
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.bin
+models/
+!models/.gitkeep
+
+# Video files (large)
+videos/
+!videos/.gitkeep
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+
+# HuggingFace cache
+.cache/
+huggingface/
+
+# Output files
+outputs/
+output/
+
+# Temporary files
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

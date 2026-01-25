@@ -41,6 +41,8 @@
   let frameCount = 0;
 
   onMount(async () => {
+    checkSecureContext();
+
     // Load settings
     const res = await fetch('/api/settings');
     settings = await res.json();
@@ -113,7 +115,32 @@
     await sendFrame();
   }
 
+  // Check if we're in a secure context (HTTPS or localhost)
+  let isSecureContext = false;
+  let securityWarning = '';
+
+  function checkSecureContext() {
+    isSecureContext = window.isSecureContext ||
+                      window.location.hostname === 'localhost' ||
+                      window.location.hostname === '127.0.0.1';
+    if (!isSecureContext) {
+      securityWarning = 'Webcam requires HTTPS. Use "Upload MP4" or "Server Videos" instead, or access via localhost.';
+    }
+  }
+
   async function startWebcam() {
+    checkSecureContext();
+    if (!isSecureContext) {
+      console.warn('Webcam not available: requires secure context (HTTPS)');
+      return;
+    }
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      securityWarning = 'Webcam API not available. Use HTTPS or localhost.';
+      console.error('getUserMedia not supported');
+      return;
+    }
+
     try {
       mediaStream = await navigator.mediaDevices.getUserMedia({
         video: { width: 512, height: 512 }
@@ -124,6 +151,7 @@
       }
     } catch (e) {
       console.error('Webcam error:', e);
+      securityWarning = `Webcam error: ${e instanceof Error ? e.message : 'Unknown error'}`;
     }
   }
 
@@ -278,6 +306,12 @@
       </div>
     </div>
 
+    {#if securityWarning}
+      <div class="warning">
+        {securityWarning}
+      </div>
+    {/if}
+
     <div class="controls">
       <div class="control-group">
         <label>Source</label>
@@ -335,6 +369,16 @@
     max-width: 1200px;
     margin: 0 auto;
     padding: 20px;
+  }
+
+  .warning {
+    background: #7c2d12;
+    border: 1px solid #c2410c;
+    color: #fed7aa;
+    padding: 12px 16px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    font-size: 0.9rem;
   }
 
   header {

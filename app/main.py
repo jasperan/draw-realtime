@@ -14,7 +14,7 @@ from typing import Optional
 import cv2
 import numpy as np
 from fastapi import FastAPI, WebSocket, HTTPException, Request, UploadFile, File, BackgroundTasks, Form
-from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
+from fastapi.responses import StreamingResponse, JSONResponse, FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
@@ -285,12 +285,17 @@ class App:
             if not preview_path.exists():
                 raise HTTPException(status_code=404, detail="Preview not found")
 
-            # Add cache-busting header
-            return FileResponse(
-                path=str(preview_path),
-                media_type="image/jpeg",
-                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
-            )
+            # Read file into memory to avoid Content-Length mismatch when file is being updated
+            try:
+                with open(preview_path, "rb") as f:
+                    content = f.read()
+                return Response(
+                    content=content,
+                    media_type="image/jpeg",
+                    headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+                )
+            except Exception:
+                raise HTTPException(status_code=404, detail="Preview not found")
 
     def _setup_static(self):
         """Set up static file serving."""

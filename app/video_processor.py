@@ -170,20 +170,30 @@ class VideoProcessor:
                 # Process through pipeline
                 output_image = pipeline.predict(pil_image)
 
+                # Resize input frame for preview (always)
+                input_resized = cv2.resize(frame, (config.width, config.height))
+                
                 if output_image is not None:
                     # Convert back to BGR for OpenCV
                     output_array = np.array(output_image)
                     output_bgr = cv2.cvtColor(output_array, cv2.COLOR_RGB2BGR)
                     out.write(output_bgr)
+                else:
+                    # If prediction failed, use input frame as output placeholder
+                    output_bgr = input_resized
 
-                    # Save preview frames every 10 frames for real-time visualization
-                    if frame_idx % 10 == 0:
-                        # Resize input frame to match output size for comparison
-                        input_resized = cv2.resize(frame, (config.width, config.height))
-                        cv2.imwrite(input_preview_path, input_resized, [cv2.IMWRITE_JPEG_QUALITY, 85])
-                        cv2.imwrite(output_preview_path, output_bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
-                        job.input_frame_path = f"{job_id}_input.jpg"
-                        job.preview_frame_path = f"{job_id}_output.jpg"
+                # Save preview frames every 10 frames for real-time visualization
+                # Use atomic writes (write to temp file, then rename) to avoid race conditions
+                if frame_idx % 10 == 0:
+                    input_temp = str(self.preview_dir / f"{job_id}_input_tmp.jpg")
+                    output_temp = str(self.preview_dir / f"{job_id}_output_tmp.jpg")
+                    cv2.imwrite(input_temp, input_resized, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                    cv2.imwrite(output_temp, output_bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                    # Atomic rename to avoid serving partial files
+                    os.replace(input_temp, input_preview_path)
+                    os.replace(output_temp, output_preview_path)
+                    job.input_frame_path = f"{job_id}_input.jpg"
+                    job.preview_frame_path = f"{job_id}_output.jpg"
 
                 frame_idx += 1
                 frames_since_update += 1

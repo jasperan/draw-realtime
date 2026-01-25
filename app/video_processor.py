@@ -182,9 +182,9 @@ class VideoProcessor:
                     # If prediction failed, use input frame as output placeholder
                     output_bgr = input_resized
 
-                # Save preview frames every 10 frames for real-time visualization
+                # Save preview frames every 100 frames for real-time visualization
                 # Use atomic writes (write to temp file, then rename) to avoid race conditions
-                if frame_idx % 10 == 0:
+                if frame_idx % 100 == 0:
                     input_temp = str(self.preview_dir / f"{job_id}_input_tmp.jpg")
                     output_temp = str(self.preview_dir / f"{job_id}_output_tmp.jpg")
                     cv2.imwrite(input_temp, input_resized, [cv2.IMWRITE_JPEG_QUALITY, 85])

@@ -180,10 +180,10 @@
 
         currentJob = await res.json();
 
-        // Update real-time preview frames only when frame changes (every 10 frames on backend)
+        // Update real-time preview frames only when frame changes (every 100 frames on backend)
         // This prevents NS_BINDING_ABORTED errors from rapid URL changes
         if (currentJob.status === 'processing' && currentJob.preview_frame && currentJob.input_frame) {
-          const currentFrame = Math.floor(currentJob.current_frame / 10) * 10;
+          const currentFrame = Math.floor(currentJob.current_frame / 100) * 100;
           if (currentFrame !== lastPreviewFrame) {
             lastPreviewFrame = currentFrame;
             previewTimestamp = Date.now();

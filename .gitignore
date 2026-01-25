@@ -248,3 +248,4 @@ data/waze_oceania.db
 data/waze_oceania.db-shm
 data/waze_oceania.db-wal
 .playwright-mcp/preview_fixed.png
+.playwright-mcp/preview_100frames.png

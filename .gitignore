@@ -214,6 +214,9 @@ output/
 # Uploads
 uploads/
 
+# Preview frames
+previews/
+
 # Temporary files
 *.tmp
 *.temp

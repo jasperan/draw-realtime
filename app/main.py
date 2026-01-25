@@ -252,8 +252,36 @@ class App:
             if os.path.exists(job.output_path):
                 os.remove(job.output_path)
 
+            # Remove preview files
+            input_preview = processor.preview_dir / f"{job_id}_input.jpg"
+            output_preview = processor.preview_dir / f"{job_id}_output.jpg"
+            if input_preview.exists():
+                os.remove(input_preview)
+            if output_preview.exists():
+                os.remove(output_preview)
+
             del processor.jobs[job_id]
             return JSONResponse({"status": "deleted"})
+
+        @self.app.get("/api/preview/{filename}")
+        async def get_preview_frame(filename: str):
+            """Serve a preview frame image for real-time visualization."""
+            processor = get_processor()
+
+            # Security: validate filename
+            if ".." in filename or "/" in filename or "\\" in filename:
+                raise HTTPException(status_code=400, detail="Invalid filename")
+
+            preview_path = processor.preview_dir / filename
+            if not preview_path.exists():
+                raise HTTPException(status_code=404, detail="Preview not found")
+
+            # Add cache-busting header
+            return FileResponse(
+                path=str(preview_path),
+                media_type="image/jpeg",
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+            )
 
     def _setup_static(self):
         """Set up static file serving."""

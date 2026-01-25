@@ -17,12 +17,12 @@ MODELS: Dict[str, ModelConfig] = {
     "sd-turbo": ModelConfig(
         id="stabilityai/sd-turbo",
         use_lcm_lora=False,
-        description="SD-Turbo (fast, default)"
+        description="SD-Turbo (fast, lower quality)"
     ),
     "sd15-lcm": ModelConfig(
         id="runwayml/stable-diffusion-v1-5",
         use_lcm_lora=True,
-        description="SD 1.5 + LCM-LoRA"
+        description="SD 1.5 + LCM-LoRA (slower, higher quality)"
     ),
 }
 

@@ -28,6 +28,19 @@
   // Job history
   let jobHistory: any[] = [];
 
+  // Real-time preview state
+  let previewInputUrl = '';
+  let previewOutputUrl = '';
+  let previewTimestamp = 0;
+
+  // Format seconds to MM:SS
+  function formatTime(seconds: number): string {
+    if (!seconds || seconds <= 0) return '--:--';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  }
+
   onMount(async () => {
     // Load settings
     const res = await fetch('/api/settings');
@@ -150,13 +163,24 @@
 
         currentJob = await res.json();
 
+        // Update real-time preview frames with cache-busting
+        if (currentJob.status === 'processing' && currentJob.preview_frame && currentJob.input_frame) {
+          previewTimestamp = Date.now();
+          previewInputUrl = `/api/preview/${currentJob.input_frame}?t=${previewTimestamp}`;
+          previewOutputUrl = `/api/preview/${currentJob.preview_frame}?t=${previewTimestamp}`;
+        }
+
         if (currentJob.status === 'completed') {
           stopPolling();
           outputVideoUrl = `/api/output/${currentJob.output_filename}`;
+          previewInputUrl = '';
+          previewOutputUrl = '';
           isProcessing = false;
           await refreshJobs();
         } else if (currentJob.status === 'failed') {
           stopPolling();
+          previewInputUrl = '';
+          previewOutputUrl = '';
           isProcessing = false;
           alert(`Processing failed: ${currentJob.error}`);
           await refreshJobs();
@@ -274,7 +298,12 @@
     <div class="video-grid">
       <div class="video-box">
         <h3>Input Video</h3>
-        {#if inputVideoUrl}
+        {#if isProcessing && previewInputUrl}
+          <div class="placeholder processing">
+            <img src={previewInputUrl} alt="Input frame" class="preview-frame" />
+            <div class="frame-label">Frame {currentJob?.current_frame || 0}</div>
+          </div>
+        {:else if inputVideoUrl}
           <video
             bind:this={inputVideoEl}
             src={inputVideoUrl}
@@ -305,11 +334,22 @@
           ></video>
         {:else if isProcessing && currentJob}
           <div class="placeholder processing">
-            <div class="progress-container">
-              <div class="progress-bar" style="width: {currentJob.progress}%"></div>
+            {#if previewOutputUrl}
+              <img src={previewOutputUrl} alt="Processing preview" class="preview-frame" />
+            {/if}
+            <div class="progress-overlay">
+              <div class="progress-container">
+                <div class="progress-bar" style="width: {currentJob.progress}%"></div>
+              </div>
+              <div class="progress-stats">
+                <span>{currentJob.current_frame} / {currentJob.total_frames} frames</span>
+                <span class="progress-percent">{currentJob.progress.toFixed(1)}%</span>
+              </div>
+              <div class="progress-stats">
+                <span>{currentJob.processing_fps} fps</span>
+                <span class="eta">ETA: {formatTime(currentJob.eta_seconds)}</span>
+              </div>
             </div>
-            <span>Processing: {currentJob.current_frame} / {currentJob.total_frames} frames</span>
-            <span class="progress-percent">{currentJob.progress.toFixed(1)}%</span>
           </div>
         {:else}
           <div class="placeholder">
@@ -544,8 +584,59 @@
   }
 
   .progress-percent {
-    font-size: 1.5rem;
+    font-size: 1.2rem;
     font-weight: 600;
+  }
+
+  .preview-frame {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    position: absolute;
+    top: 0;
+    left: 0;
+    border-radius: 8px;
+  }
+
+  .progress-overlay {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.85));
+    padding: 20px;
+    border-radius: 0 0 8px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .progress-stats {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    color: #ddd;
+  }
+
+  .eta {
+    color: #60a5fa;
+    font-weight: 500;
+  }
+
+  .frame-label {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    background: rgba(0, 0, 0, 0.7);
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    color: #60a5fa;
+  }
+
+  .placeholder.processing {
+    position: relative;
+    padding: 0;
   }
 
   .playback-controls {

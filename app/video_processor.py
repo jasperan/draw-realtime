@@ -35,10 +35,15 @@ class ProcessingJob:
     current_frame: int = 0
     total_frames: int = 0
     fps: float = 30.0
+    processing_fps: float = 0.0  # Actual processing speed
+    eta_seconds: float = 0.0  # Estimated time remaining
     error: Optional[str] = None
     created_at: float = field(default_factory=time.time)
     started_at: Optional[float] = None
     completed_at: Optional[float] = None
+    # For real-time preview
+    preview_frame_path: Optional[str] = None  # Path to latest output frame image
+    input_frame_path: Optional[str] = None  # Path to corresponding input frame
 
     def to_dict(self) -> dict:
         return {
@@ -52,10 +57,14 @@ class ProcessingJob:
             "current_frame": self.current_frame,
             "total_frames": self.total_frames,
             "fps": self.fps,
+            "processing_fps": round(self.processing_fps, 1),
+            "eta_seconds": round(self.eta_seconds, 0),
             "error": self.error,
             "created_at": self.created_at,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
+            "preview_frame": self.preview_frame_path,
+            "input_frame": self.input_frame_path,
         }
 
 
@@ -66,8 +75,10 @@ class VideoProcessor:
         self.jobs: Dict[str, ProcessingJob] = {}
         self.outputs_dir = Path(config.outputs_dir) if hasattr(config, 'outputs_dir') else Path("outputs")
         self.uploads_dir = Path("uploads")
+        self.preview_dir = Path("previews")  # For real-time frame previews
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
         self.uploads_dir.mkdir(parents=True, exist_ok=True)
+        self.preview_dir.mkdir(parents=True, exist_ok=True)
 
     def create_job(
         self,
@@ -114,6 +125,10 @@ class VideoProcessor:
         job.status = JobStatus.PROCESSING
         job.started_at = time.time()
 
+        # Preview frame paths for this job
+        input_preview_path = str(self.preview_dir / f"{job_id}_input.jpg")
+        output_preview_path = str(self.preview_dir / f"{job_id}_output.jpg")
+
         try:
             # Check/update model
             if job.model != pipeline.get_current_model():
@@ -140,6 +155,9 @@ class VideoProcessor:
             )
 
             frame_idx = 0
+            last_speed_update = time.time()
+            frames_since_update = 0
+
             while True:
                 ret, frame = cap.read()
                 if not ret:
@@ -158,9 +176,29 @@ class VideoProcessor:
                     output_bgr = cv2.cvtColor(output_array, cv2.COLOR_RGB2BGR)
                     out.write(output_bgr)
 
+                    # Save preview frames every 10 frames for real-time visualization
+                    if frame_idx % 10 == 0:
+                        # Resize input frame to match output size for comparison
+                        input_resized = cv2.resize(frame, (config.width, config.height))
+                        cv2.imwrite(input_preview_path, input_resized, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                        cv2.imwrite(output_preview_path, output_bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                        job.input_frame_path = f"{job_id}_input.jpg"
+                        job.preview_frame_path = f"{job_id}_output.jpg"
+
                 frame_idx += 1
+                frames_since_update += 1
                 job.current_frame = frame_idx
                 job.progress = (frame_idx / job.total_frames) * 100
+
+                # Update processing speed every second
+                now = time.time()
+                if now - last_speed_update >= 1.0:
+                    job.processing_fps = frames_since_update / (now - last_speed_update)
+                    frames_remaining = job.total_frames - frame_idx
+                    if job.processing_fps > 0:
+                        job.eta_seconds = frames_remaining / job.processing_fps
+                    last_speed_update = now
+                    frames_since_update = 0
 
                 # Yield control to allow other async operations
                 if frame_idx % 10 == 0:

@@ -1,29 +1,29 @@
-"""StreamDiffusion Real-Time Demo - FastAPI Application."""
+"""StreamDiffusion Video-to-Video Demo - FastAPI Application."""
 
 import asyncio
 import io
 import logging
 import mimetypes
 import os
+import shutil
 import time
 import uuid
-from types import SimpleNamespace
+from pathlib import Path
 from typing import Optional
 
 import cv2
-import markdown2
 import numpy as np
-from fastapi import FastAPI, WebSocket, HTTPException, Request, UploadFile, File
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi import FastAPI, WebSocket, HTTPException, Request, UploadFile, File, BackgroundTasks, Form
+from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel, Field
 
 from app.config import config, MODELS, DEFAULT_MODEL, DEFAULT_PROMPT
-from app.connection_manager import ConnectionManager, ServerFullException
 from app.pipeline import get_pipeline
 from app.video_source import get_available_videos, get_video_path, VideoSource
+from app.video_processor import get_processor, JobStatus
 
 # Fix mime type on Windows
 mimetypes.add_type("application/javascript", ".js")
@@ -32,17 +32,13 @@ mimetypes.add_type("application/javascript", ".js")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Throttle for frame processing
-THROTTLE = 1.0 / 120
-
 
 # Request/Response models
-class InputParams(BaseModel):
-    """Parameters for image generation."""
+class ProcessRequest(BaseModel):
+    """Request to process a video."""
+    video_name: Optional[str] = Field(default=None, description="Server video filename")
     prompt: str = Field(default=DEFAULT_PROMPT, description="Generation prompt")
     model: str = Field(default=DEFAULT_MODEL, description="Model to use")
-    source_type: str = Field(default="webcam", description="Input source type")
-    video_name: Optional[str] = Field(default=None, description="Server video filename")
 
 
 class SettingsResponse(BaseModel):
@@ -52,36 +48,13 @@ class SettingsResponse(BaseModel):
     default_prompt: str
     width: int
     height: int
-    max_queue_size: int
-
-
-def pil_to_frame(image: Image.Image) -> bytes:
-    """Convert PIL image to MJPEG frame bytes."""
-    buffer = io.BytesIO()
-    image.save(buffer, format="JPEG", quality=85)
-    frame_bytes = buffer.getvalue()
-    return (
-        b"--frame\r\n"
-        b"Content-Type: image/jpeg\r\n"
-        b"Content-Length: " + str(len(frame_bytes)).encode() + b"\r\n\r\n"
-        + frame_bytes
-        + b"\r\n"
-    )
-
-
-def bytes_to_pil(data: bytes) -> Image.Image:
-    """Convert bytes to PIL image."""
-    return Image.open(io.BytesIO(data)).convert("RGB")
 
 
 class App:
     """Main application class."""
 
     def __init__(self):
-        self.app = FastAPI(title="StreamDiffusion Real-Time Demo")
-        self.conn_manager = ConnectionManager()
-        self.video_sources: dict = {}  # user_id -> VideoSource
-
+        self.app = FastAPI(title="StreamDiffusion Video-to-Video Demo")
         self._setup_middleware()
         self._setup_routes()
         self._setup_static()
@@ -109,7 +82,6 @@ class App:
                 default_prompt=DEFAULT_PROMPT,
                 width=config.width,
                 height=config.height,
-                max_queue_size=config.max_queue_size,
             )
 
         @self.app.get("/api/videos")
@@ -117,144 +89,171 @@ class App:
             """List available server-side videos."""
             return JSONResponse({"videos": get_available_videos()})
 
-        @self.app.get("/api/queue")
-        async def get_queue_size():
-            """Get current connection count."""
-            return JSONResponse({"queue_size": self.conn_manager.get_user_count()})
+        @self.app.post("/api/upload")
+        async def upload_video(file: UploadFile = File(...)):
+            """Upload a video file for processing."""
+            processor = get_processor()
 
-        @self.app.post("/api/model/{model_key}")
-        async def switch_model(model_key: str):
-            """Switch to a different model."""
-            pipeline = get_pipeline()
-            if pipeline.load_model(model_key):
-                return JSONResponse({"status": "ok", "model": model_key})
-            else:
-                raise HTTPException(status_code=400, detail=f"Failed to load model: {model_key}")
+            # Validate file type
+            if not file.filename:
+                raise HTTPException(status_code=400, detail="No filename provided")
 
-        @self.app.websocket("/api/ws/{user_id}")
-        async def websocket_endpoint(user_id: uuid.UUID, websocket: WebSocket):
-            """WebSocket endpoint for frame streaming."""
+            allowed_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.webm'}
+            ext = Path(file.filename).suffix.lower()
+            if ext not in allowed_extensions:
+                raise HTTPException(status_code=400, detail=f"Invalid file type. Allowed: {allowed_extensions}")
+
+            # Save uploaded file
+            upload_id = str(uuid.uuid4())[:8]
+            safe_filename = f"{upload_id}_{file.filename}"
+            upload_path = processor.uploads_dir / safe_filename
+
             try:
-                await self.conn_manager.connect(user_id, websocket, config.max_queue_size)
-                await self._handle_websocket(user_id)
-            except ServerFullException as e:
-                logger.error(f"Server full: {e}")
+                with open(upload_path, "wb") as buffer:
+                    shutil.copyfileobj(file.file, buffer)
             finally:
-                await self.conn_manager.disconnect(user_id)
-                # Clean up video source if any
-                if user_id in self.video_sources:
-                    self.video_sources[user_id].close()
-                    del self.video_sources[user_id]
-                logger.info(f"User disconnected: {user_id}")
+                file.file.close()
 
-        @self.app.get("/api/stream/{user_id}")
-        async def stream(user_id: uuid.UUID, request: Request):
-            """MJPEG stream endpoint for processed frames."""
-            if not self.conn_manager.check_user(user_id):
-                raise HTTPException(status_code=404, detail="User not found")
+            # Get video info
+            cap = cv2.VideoCapture(str(upload_path))
+            if not cap.isOpened():
+                os.remove(upload_path)
+                raise HTTPException(status_code=400, detail="Could not read video file")
 
-            async def generate():
-                pipeline = get_pipeline()
-                last_params = SimpleNamespace()
+            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+            frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            duration = frames / fps if fps > 0 else 0
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            cap.release()
 
-                while self.conn_manager.check_user(user_id):
-                    start_time = time.time()
+            return JSONResponse({
+                "filename": safe_filename,
+                "original_name": file.filename,
+                "path": str(upload_path),
+                "duration": round(duration, 1),
+                "fps": round(fps, 1),
+                "width": width,
+                "height": height,
+                "frames": frames,
+            })
 
-                    params = await self.conn_manager.get_latest_data(user_id)
+        @self.app.post("/api/process")
+        async def process_video(
+            background_tasks: BackgroundTasks,
+            video_name: str = Form(None),
+            uploaded_file: str = Form(None),
+            prompt: str = Form(DEFAULT_PROMPT),
+            model: str = Form(DEFAULT_MODEL),
+        ):
+            """Start processing a video."""
+            processor = get_processor()
+            pipeline = get_pipeline()
 
-                    if not vars(params):
-                        await self.conn_manager.send_json(user_id, {"status": "send_frame"})
-                        await asyncio.sleep(THROTTLE)
-                        continue
+            # Determine input path
+            if uploaded_file:
+                input_path = str(processor.uploads_dir / uploaded_file)
+                if not os.path.exists(input_path):
+                    raise HTTPException(status_code=404, detail="Uploaded file not found")
+            elif video_name:
+                input_path = get_video_path(video_name)
+                if not input_path:
+                    raise HTTPException(status_code=404, detail="Video not found")
+            else:
+                raise HTTPException(status_code=400, detail="No video specified")
 
-                    # Check for model change
-                    if hasattr(params, 'model') and params.model != pipeline.get_current_model():
-                        pipeline.load_model(params.model)
+            # Create job
+            try:
+                job = processor.create_job(
+                    input_path=input_path,
+                    prompt=prompt,
+                    model=model,
+                )
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
 
-                    # Check for prompt change
-                    if hasattr(params, 'prompt') and params.prompt:
-                        pipeline.update_prompt(params.prompt)
+            # Start processing in background
+            background_tasks.add_task(processor.process_job, job.job_id, pipeline)
 
-                    # Get image from params
-                    if hasattr(params, 'image') and params.image is not None:
-                        output = pipeline.predict(params.image)
-                        if output:
-                            yield pil_to_frame(output)
-                            # Chrome bug workaround
-                            user_agent = request.headers.get("user-agent", "")
-                            if "Firefox" not in user_agent:
-                                yield pil_to_frame(output)
+            return JSONResponse(job.to_dict())
 
-                    await self.conn_manager.send_json(user_id, {"status": "send_frame"})
+        @self.app.get("/api/job/{job_id}")
+        async def get_job_status(job_id: str):
+            """Get the status of a processing job."""
+            processor = get_processor()
+            job = processor.get_job(job_id)
+            if not job:
+                raise HTTPException(status_code=404, detail="Job not found")
+            return JSONResponse(job.to_dict())
 
-                    if config.debug:
-                        logger.info(f"Frame time: {time.time() - start_time:.3f}s")
+        @self.app.get("/api/jobs")
+        async def list_jobs():
+            """List all processing jobs."""
+            processor = get_processor()
+            return JSONResponse({"jobs": processor.get_all_jobs()})
 
-            return StreamingResponse(
-                generate(),
-                media_type="multipart/x-mixed-replace;boundary=frame",
-                headers={"Cache-Control": "no-cache"},
+        @self.app.get("/api/output/{filename}")
+        async def get_output_video(filename: str):
+            """Serve a processed output video."""
+            processor = get_processor()
+
+            # Security: validate filename
+            if ".." in filename or "/" in filename or "\\" in filename:
+                raise HTTPException(status_code=400, detail="Invalid filename")
+
+            output_path = processor.outputs_dir / filename
+            if not output_path.exists():
+                raise HTTPException(status_code=404, detail="Output not found")
+
+            return FileResponse(
+                path=str(output_path),
+                media_type="video/mp4",
+                filename=filename,
             )
 
-    async def _handle_websocket(self, user_id: uuid.UUID):
-        """Handle WebSocket messages from a user."""
-        pipeline = get_pipeline()
-        last_time = time.time()
+        @self.app.get("/api/input/{filename}")
+        async def get_input_video(filename: str):
+            """Serve an input video (from uploads or videos dir)."""
+            processor = get_processor()
 
-        while True:
-            if config.timeout > 0 and time.time() - last_time > config.timeout:
-                await self.conn_manager.send_json(
-                    user_id,
-                    {"status": "timeout", "message": "Session ended"},
+            # Security: validate filename
+            if ".." in filename or "/" in filename or "\\" in filename:
+                raise HTTPException(status_code=400, detail="Invalid filename")
+
+            # Check uploads dir first
+            upload_path = processor.uploads_dir / filename
+            if upload_path.exists():
+                return FileResponse(
+                    path=str(upload_path),
+                    media_type="video/mp4",
+                    filename=filename,
                 )
-                break
 
-            try:
-                data = await self.conn_manager.receive_json(user_id)
-            except Exception:
-                break
+            # Check videos dir
+            video_path = get_video_path(filename)
+            if video_path:
+                return FileResponse(
+                    path=video_path,
+                    media_type="video/mp4",
+                    filename=filename,
+                )
 
-            if data.get("status") != "next_frame":
-                await asyncio.sleep(THROTTLE)
-                continue
+            raise HTTPException(status_code=404, detail="Video not found")
 
-            # Receive parameters
-            params_data = await self.conn_manager.receive_json(user_id)
-            params = SimpleNamespace(**params_data)
+        @self.app.delete("/api/job/{job_id}")
+        async def delete_job(job_id: str):
+            """Delete a job and its output file."""
+            processor = get_processor()
+            job = processor.get_job(job_id)
+            if not job:
+                raise HTTPException(status_code=404, detail="Job not found")
 
-            # Handle different source types
-            source_type = getattr(params, 'source_type', 'webcam')
+            # Remove output file if exists
+            if os.path.exists(job.output_path):
+                os.remove(job.output_path)
 
-            if source_type == "webcam" or source_type == "upload":
-                # Receive image from client
-                image_data = await self.conn_manager.receive_bytes(user_id)
-                if len(image_data) == 0:
-                    await self.conn_manager.send_json(user_id, {"status": "send_frame"})
-                    await asyncio.sleep(THROTTLE)
-                    continue
-                params.image = bytes_to_pil(image_data)
-
-            elif source_type == "server_video":
-                # Read frame from server-side video
-                video_name = getattr(params, 'video_name', None)
-                if video_name:
-                    # Initialize video source if needed
-                    if user_id not in self.video_sources:
-                        video_path = get_video_path(video_name)
-                        if video_path:
-                            self.video_sources[user_id] = VideoSource(video_path)
-
-                    if user_id in self.video_sources:
-                        frame = self.video_sources[user_id].read_frame()
-                        if frame is None:
-                            self.video_sources[user_id].reset()
-                            frame = self.video_sources[user_id].read_frame()
-                        if frame is not None:
-                            params.image = Image.fromarray(frame)
-
-            await self.conn_manager.update_data(user_id, params)
-            await self.conn_manager.send_json(user_id, {"status": "wait"})
-            last_time = time.time()
+            del processor.jobs[job_id]
+            return JSONResponse({"status": "deleted"})
 
     def _setup_static(self):
         """Set up static file serving."""
@@ -267,7 +266,7 @@ class App:
             @self.app.get("/")
             async def index():
                 return JSONResponse({
-                    "message": "StreamDiffusion Real-Time Demo API",
+                    "message": "StreamDiffusion Video-to-Video Demo API",
                     "docs": "/docs",
                     "note": "Frontend not built. Run 'npm run build' in frontend directory."
                 })

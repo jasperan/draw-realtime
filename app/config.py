@@ -38,6 +38,8 @@ class AppConfig(BaseModel):
 
     # Paths
     videos_dir: str = "videos"
+    outputs_dir: str = "outputs"
+    uploads_dir: str = "uploads"
     engines_dir: str = "engines"
 
     # Pipeline settings

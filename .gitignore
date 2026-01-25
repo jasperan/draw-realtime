@@ -211,6 +211,9 @@ huggingface/
 outputs/
 output/
 
+# Uploads
+uploads/
+
 # Temporary files
 *.tmp
 *.temp

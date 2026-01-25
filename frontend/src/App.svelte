@@ -1,48 +1,34 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
-
-  // Generate UUID (works over HTTP too)
-  function generateUUID(): string {
-    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-      return crypto.randomUUID();
-    }
-    // Fallback for non-secure contexts
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-      const r = Math.random() * 16 | 0;
-      const v = c === 'x' ? r : (r & 0x3 | 0x8);
-      return v.toString(16);
-    });
-  }
+  import { onMount } from 'svelte';
 
   // State
   let settings: any = null;
-  let connected = false;
-  let userId = generateUUID();
-  let ws: WebSocket | null = null;
-  let streamUrl = '';
-
-  // Input state
-  let sourceType: 'webcam' | 'upload' | 'server_video' = 'webcam';
   let selectedModel = '';
   let prompt = '';
-  let serverVideos: any[] = [];
-  let selectedVideo = '';
 
-  // Media elements
-  let videoEl: HTMLVideoElement;
-  let canvasEl: HTMLCanvasElement;
-  let mediaStream: MediaStream | null = null;
-  let uploadedVideo: HTMLVideoElement | null = null;
+  // Video sources
+  let serverVideos: any[] = [];
+  let selectedServerVideo = '';
+  let uploadedFile: any = null;
 
   // Processing state
+  let currentJob: any = null;
   let isProcessing = false;
-  let fps = 0;
-  let lastFrameTime = 0;
-  let frameCount = 0;
+  let pollInterval: any = null;
+
+  // Video URLs for playback
+  let inputVideoUrl = '';
+  let outputVideoUrl = '';
+
+  // Video elements for sync playback
+  let inputVideoEl: HTMLVideoElement;
+  let outputVideoEl: HTMLVideoElement;
+  let syncPlayback = true;
+
+  // Job history
+  let jobHistory: any[] = [];
 
   onMount(async () => {
-    checkSecureContext();
-
     // Load settings
     const res = await fetch('/api/settings');
     settings = await res.json();
@@ -54,370 +40,449 @@
     const videosData = await videosRes.json();
     serverVideos = videosData.videos || [];
 
-    // Start
-    await connect();
+    // Load existing jobs
+    await refreshJobs();
   });
 
-  onDestroy(() => {
-    disconnect();
-  });
-
-  async function connect() {
-    if (connected) return;
-
-    // Start WebSocket
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(`${wsProtocol}//${window.location.host}/api/ws/${userId}`);
-
-    ws.onopen = () => {
-      connected = true;
-      streamUrl = `/api/stream/${userId}`;
-      startProcessing();
-    };
-
-    ws.onclose = () => {
-      connected = false;
-      isProcessing = false;
-    };
-
-    ws.onmessage = async (event) => {
-      const data = JSON.parse(event.data);
-      if (data.status === 'send_frame' && isProcessing) {
-        await sendFrame();
-      }
-    };
-  }
-
-  function disconnect() {
-    isProcessing = false;
-    if (ws) {
-      ws.close();
-      ws = null;
-    }
-    if (mediaStream) {
-      mediaStream.getTracks().forEach(t => t.stop());
-      mediaStream = null;
-    }
-    connected = false;
-  }
-
-  async function startProcessing() {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
-    // Start appropriate source
-    if (sourceType === 'webcam') {
-      await startWebcam();
-    } else if (sourceType === 'upload' && uploadedVideo) {
-      uploadedVideo.play();
-    }
-
-    isProcessing = true;
-    await sendFrame();
-  }
-
-  // Check if we're in a secure context (HTTPS or localhost)
-  let isSecureContext = false;
-  let securityWarning = '';
-
-  function checkSecureContext() {
-    isSecureContext = window.isSecureContext ||
-                      window.location.hostname === 'localhost' ||
-                      window.location.hostname === '127.0.0.1';
-    if (!isSecureContext) {
-      securityWarning = 'Webcam requires HTTPS. Use "Upload MP4" or "Server Videos" instead, or access via localhost.';
-    }
-  }
-
-  async function startWebcam() {
-    checkSecureContext();
-    if (!isSecureContext) {
-      console.warn('Webcam not available: requires secure context (HTTPS)');
-      return;
-    }
-
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      securityWarning = 'Webcam API not available. Use HTTPS or localhost.';
-      console.error('getUserMedia not supported');
-      return;
-    }
-
+  async function refreshJobs() {
     try {
-      mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 512, height: 512 }
-      });
-      if (videoEl) {
-        videoEl.srcObject = mediaStream;
-        await videoEl.play();
-      }
+      const res = await fetch('/api/jobs');
+      const data = await res.json();
+      jobHistory = data.jobs || [];
     } catch (e) {
-      console.error('Webcam error:', e);
-      securityWarning = `Webcam error: ${e instanceof Error ? e.message : 'Unknown error'}`;
+      console.error('Failed to load jobs:', e);
     }
   }
 
-  async function sendFrame() {
-    if (!ws || ws.readyState !== WebSocket.OPEN || !isProcessing) return;
-
-    // Calculate FPS
-    const now = performance.now();
-    if (lastFrameTime > 0) {
-      frameCount++;
-      if (now - lastFrameTime > 1000) {
-        fps = Math.round(frameCount * 1000 / (now - lastFrameTime));
-        frameCount = 0;
-        lastFrameTime = now;
-      }
-    } else {
-      lastFrameTime = now;
-    }
-
-    // Request next frame
-    ws.send(JSON.stringify({ status: 'next_frame' }));
-
-    // Send parameters
-    ws.send(JSON.stringify({
-      prompt,
-      model: selectedModel,
-      source_type: sourceType,
-      video_name: sourceType === 'server_video' ? selectedVideo : null
-    }));
-
-    // For webcam/upload, capture and send frame
-    if (sourceType !== 'server_video') {
-      const frameBlob = await captureFrame();
-      if (frameBlob) {
-        ws.send(frameBlob);
-      } else {
-        ws.send(new Uint8Array(0));
-      }
-    }
-  }
-
-  async function captureFrame(): Promise<Blob | null> {
-    if (!canvasEl) return null;
-
-    const ctx = canvasEl.getContext('2d');
-    if (!ctx) return null;
-
-    let source: HTMLVideoElement | null = null;
-    if (sourceType === 'webcam' && videoEl) {
-      source = videoEl;
-    } else if (sourceType === 'upload' && uploadedVideo) {
-      source = uploadedVideo;
-    }
-
-    if (!source || source.readyState < 2) return null;
-
-    // Draw to canvas
-    ctx.drawImage(source, 0, 0, 512, 512);
-
-    // Convert to blob
-    return new Promise((resolve) => {
-      canvasEl.toBlob((blob) => resolve(blob), 'image/jpeg', 0.8);
-    });
-  }
-
-  function handleFileUpload(event: Event) {
+  async function handleFileUpload(event: Event) {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
     if (!file) return;
 
-    // Stop current processing
-    isProcessing = false;
+    const formData = new FormData();
+    formData.append('file', file);
 
-    // Create video element for uploaded file
-    if (uploadedVideo) {
-      uploadedVideo.pause();
-      uploadedVideo.src = '';
-    }
+    try {
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData
+      });
 
-    uploadedVideo = document.createElement('video');
-    uploadedVideo.src = URL.createObjectURL(file);
-    uploadedVideo.loop = true;
-    uploadedVideo.muted = true;
-    uploadedVideo.playsInline = true;
-
-    uploadedVideo.onloadeddata = () => {
-      sourceType = 'upload';
-      if (connected) {
-        uploadedVideo?.play();
-        isProcessing = true;
-        sendFrame();
+      if (!res.ok) {
+        const error = await res.json();
+        alert(`Upload failed: ${error.detail}`);
+        return;
       }
-    };
-  }
 
-  function selectSource(type: 'webcam' | 'upload' | 'server_video') {
-    if (sourceType === type) return;
-
-    isProcessing = false;
-
-    // Stop webcam if switching away
-    if (sourceType === 'webcam' && mediaStream) {
-      mediaStream.getTracks().forEach(t => t.stop());
-      mediaStream = null;
-    }
-
-    // Stop uploaded video if switching away
-    if (sourceType === 'upload' && uploadedVideo) {
-      uploadedVideo.pause();
-    }
-
-    sourceType = type;
-
-    if (connected) {
-      startProcessing();
+      uploadedFile = await res.json();
+      selectedServerVideo = ''; // Deselect server video
+      inputVideoUrl = `/api/input/${uploadedFile.filename}`;
+      outputVideoUrl = '';
+    } catch (e) {
+      console.error('Upload error:', e);
+      alert('Failed to upload file');
     }
   }
 
-  function selectServerVideo(name: string) {
-    selectedVideo = name;
-    selectSource('server_video');
+  function selectServerVideo(video: any) {
+    selectedServerVideo = video.name;
+    uploadedFile = null;
+    inputVideoUrl = `/api/input/${video.name}`;
+    outputVideoUrl = '';
+  }
+
+  async function startProcessing() {
+    if (!inputVideoUrl) {
+      alert('Please select or upload a video first');
+      return;
+    }
+
+    isProcessing = true;
+    currentJob = null;
+    outputVideoUrl = '';
+
+    const formData = new FormData();
+    formData.append('prompt', prompt);
+    formData.append('model', selectedModel);
+
+    if (uploadedFile) {
+      formData.append('uploaded_file', uploadedFile.filename);
+    } else if (selectedServerVideo) {
+      formData.append('video_name', selectedServerVideo);
+    }
+
+    try {
+      const res = await fetch('/api/process', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        alert(`Processing failed: ${error.detail}`);
+        isProcessing = false;
+        return;
+      }
+
+      currentJob = await res.json();
+      startPolling();
+    } catch (e) {
+      console.error('Processing error:', e);
+      alert('Failed to start processing');
+      isProcessing = false;
+    }
+  }
+
+  function startPolling() {
+    if (pollInterval) {
+      clearInterval(pollInterval);
+    }
+
+    pollInterval = setInterval(async () => {
+      if (!currentJob) return;
+
+      try {
+        const res = await fetch(`/api/job/${currentJob.job_id}`);
+        if (!res.ok) {
+          stopPolling();
+          return;
+        }
+
+        currentJob = await res.json();
+
+        if (currentJob.status === 'completed') {
+          stopPolling();
+          outputVideoUrl = `/api/output/${currentJob.output_filename}`;
+          isProcessing = false;
+          await refreshJobs();
+        } else if (currentJob.status === 'failed') {
+          stopPolling();
+          isProcessing = false;
+          alert(`Processing failed: ${currentJob.error}`);
+          await refreshJobs();
+        }
+      } catch (e) {
+        console.error('Polling error:', e);
+      }
+    }, 500);
+  }
+
+  function stopPolling() {
+    if (pollInterval) {
+      clearInterval(pollInterval);
+      pollInterval = null;
+    }
+  }
+
+  function loadJob(job: any) {
+    if (job.status !== 'completed') return;
+
+    inputVideoUrl = `/api/input/${job.input_path}`;
+    outputVideoUrl = `/api/output/${job.output_filename}`;
+    prompt = job.prompt;
+    selectedModel = job.model;
+    currentJob = job;
+  }
+
+  async function deleteJob(job: any, event: Event) {
+    event.stopPropagation();
+
+    if (!confirm('Delete this job and its output?')) return;
+
+    try {
+      await fetch(`/api/job/${job.job_id}`, { method: 'DELETE' });
+      await refreshJobs();
+
+      if (currentJob?.job_id === job.job_id) {
+        outputVideoUrl = '';
+        currentJob = null;
+      }
+    } catch (e) {
+      console.error('Delete error:', e);
+    }
+  }
+
+  // Sync video playback
+  function handleInputPlay() {
+    if (syncPlayback && outputVideoEl && outputVideoUrl) {
+      outputVideoEl.currentTime = inputVideoEl.currentTime;
+      outputVideoEl.play();
+    }
+  }
+
+  function handleInputPause() {
+    if (syncPlayback && outputVideoEl) {
+      outputVideoEl.pause();
+    }
+  }
+
+  function handleInputSeek() {
+    if (syncPlayback && outputVideoEl && outputVideoUrl) {
+      outputVideoEl.currentTime = inputVideoEl.currentTime;
+    }
+  }
+
+  function handleOutputPlay() {
+    if (syncPlayback && inputVideoEl && inputVideoUrl) {
+      inputVideoEl.currentTime = outputVideoEl.currentTime;
+      inputVideoEl.play();
+    }
+  }
+
+  function handleOutputPause() {
+    if (syncPlayback && inputVideoEl) {
+      inputVideoEl.pause();
+    }
+  }
+
+  function handleOutputSeek() {
+    if (syncPlayback && inputVideoEl && inputVideoUrl) {
+      inputVideoEl.currentTime = outputVideoEl.currentTime;
+    }
+  }
+
+  function playBoth() {
+    if (inputVideoEl) inputVideoEl.play();
+    if (outputVideoEl && outputVideoUrl) outputVideoEl.play();
+  }
+
+  function pauseBoth() {
+    if (inputVideoEl) inputVideoEl.pause();
+    if (outputVideoEl) outputVideoEl.pause();
+  }
+
+  function restartBoth() {
+    if (inputVideoEl) {
+      inputVideoEl.currentTime = 0;
+      inputVideoEl.play();
+    }
+    if (outputVideoEl && outputVideoUrl) {
+      outputVideoEl.currentTime = 0;
+      outputVideoEl.play();
+    }
   }
 </script>
 
 <main>
   <header>
-    <h1>StreamDiffusion Real-Time Demo</h1>
-    <div class="status">
-      {#if connected}
-        <span class="connected">Connected</span>
-        <span class="fps">{fps} FPS</span>
-      {:else}
-        <span class="disconnected">Disconnected</span>
-      {/if}
-    </div>
+    <h1>StreamDiffusion Video-to-Video</h1>
+    <p class="subtitle">Transform videos with AI-powered diffusion</p>
   </header>
 
   <div class="container">
+    <!-- Video Comparison -->
     <div class="video-grid">
       <div class="video-box">
-        <h3>Input</h3>
-        <video bind:this={videoEl} autoplay playsinline muted></video>
-        <canvas bind:this={canvasEl} width="512" height="512" style="display:none"></canvas>
-      </div>
-      <div class="video-box">
-        <h3>Output</h3>
-        {#if streamUrl}
-          <img src={streamUrl} alt="AI Output" />
+        <h3>Input Video</h3>
+        {#if inputVideoUrl}
+          <video
+            bind:this={inputVideoEl}
+            src={inputVideoUrl}
+            controls
+            loop
+            on:play={handleInputPlay}
+            on:pause={handleInputPause}
+            on:seeked={handleInputSeek}
+          ></video>
         {:else}
-          <div class="placeholder">Waiting for connection...</div>
+          <div class="placeholder">
+            <span>Select or upload a video to begin</span>
+          </div>
+        {/if}
+      </div>
+
+      <div class="video-box">
+        <h3>Output Video</h3>
+        {#if outputVideoUrl}
+          <video
+            bind:this={outputVideoEl}
+            src={outputVideoUrl}
+            controls
+            loop
+            on:play={handleOutputPlay}
+            on:pause={handleOutputPause}
+            on:seeked={handleOutputSeek}
+          ></video>
+        {:else if isProcessing && currentJob}
+          <div class="placeholder processing">
+            <div class="progress-container">
+              <div class="progress-bar" style="width: {currentJob.progress}%"></div>
+            </div>
+            <span>Processing: {currentJob.current_frame} / {currentJob.total_frames} frames</span>
+            <span class="progress-percent">{currentJob.progress.toFixed(1)}%</span>
+          </div>
+        {:else}
+          <div class="placeholder">
+            <span>Output will appear here after processing</span>
+          </div>
         {/if}
       </div>
     </div>
 
-    {#if securityWarning}
-      <div class="warning">
-        {securityWarning}
+    <!-- Playback Controls -->
+    {#if inputVideoUrl && outputVideoUrl}
+      <div class="playback-controls">
+        <button on:click={playBoth}>Play Both</button>
+        <button on:click={pauseBoth}>Pause Both</button>
+        <button on:click={restartBoth}>Restart</button>
+        <label class="sync-toggle">
+          <input type="checkbox" bind:checked={syncPlayback} />
+          Sync Playback
+        </label>
       </div>
     {/if}
 
+    <!-- Controls Panel -->
     <div class="controls">
-      <div class="control-group">
-        <label>Source</label>
-        <div class="source-buttons">
-          <button
-            class:active={sourceType === 'webcam'}
-            on:click={() => selectSource('webcam')}
-          >
-            Webcam
-          </button>
-          <label class="file-button" class:active={sourceType === 'upload'}>
-            Upload MP4
-            <input type="file" accept="video/*" on:change={handleFileUpload} />
-          </label>
-          {#if serverVideos.length > 0}
-            <select
-              value={selectedVideo}
-              on:change={(e) => selectServerVideo(e.currentTarget.value)}
-              class:active={sourceType === 'server_video'}
-            >
-              <option value="" disabled>Server Videos</option>
-              {#each serverVideos as video}
-                <option value={video.name}>{video.name} ({video.duration}s)</option>
+      <div class="control-row">
+        <!-- Source Selection -->
+        <div class="control-group source-group">
+          <label>Video Source</label>
+          <div class="source-options">
+            <label class="file-button">
+              Upload MP4
+              <input type="file" accept="video/*" on:change={handleFileUpload} />
+            </label>
+
+            {#if serverVideos.length > 0}
+              <select
+                value={selectedServerVideo}
+                on:change={(e) => {
+                  const video = serverVideos.find(v => v.name === e.currentTarget.value);
+                  if (video) selectServerVideo(video);
+                }}
+              >
+                <option value="" disabled>Select Server Video</option>
+                {#each serverVideos as video}
+                  <option value={video.name}>{video.name} ({video.duration}s)</option>
+                {/each}
+              </select>
+            {/if}
+          </div>
+
+          {#if uploadedFile}
+            <span class="selected-file">Uploaded: {uploadedFile.original_name}</span>
+          {:else if selectedServerVideo}
+            <span class="selected-file">Selected: {selectedServerVideo}</span>
+          {/if}
+        </div>
+
+        <!-- Model Selection -->
+        <div class="control-group">
+          <label>Model</label>
+          {#if settings}
+            <select bind:value={selectedModel}>
+              {#each Object.entries(settings.models) as [key, desc]}
+                <option value={key}>{desc}</option>
               {/each}
             </select>
           {/if}
         </div>
       </div>
 
-      <div class="control-group">
-        <label>Model</label>
-        {#if settings}
-          <select bind:value={selectedModel}>
-            {#each Object.entries(settings.models) as [key, desc]}
-              <option value={key}>{desc}</option>
-            {/each}
-          </select>
-        {/if}
-      </div>
-
+      <!-- Prompt -->
       <div class="control-group">
         <label>Prompt</label>
         <input
           type="text"
           bind:value={prompt}
-          placeholder="Enter prompt..."
+          placeholder="Enter prompt for transformation..."
         />
       </div>
+
+      <!-- Process Button -->
+      <button
+        class="process-btn"
+        on:click={startProcessing}
+        disabled={isProcessing || !inputVideoUrl}
+      >
+        {#if isProcessing}
+          Processing...
+        {:else}
+          Process Video
+        {/if}
+      </button>
     </div>
+
+    <!-- Job History -->
+    {#if jobHistory.length > 0}
+      <div class="history">
+        <h3>Processing History</h3>
+        <div class="job-list">
+          {#each jobHistory as job}
+            <div
+              class="job-item"
+              class:completed={job.status === 'completed'}
+              class:failed={job.status === 'failed'}
+              class:processing={job.status === 'processing'}
+              on:click={() => loadJob(job)}
+              on:keydown={(e) => e.key === 'Enter' && loadJob(job)}
+              role="button"
+              tabindex="0"
+            >
+              <div class="job-info">
+                <span class="job-name">{job.input_path}</span>
+                <span class="job-prompt">{job.prompt.substring(0, 50)}{job.prompt.length > 50 ? '...' : ''}</span>
+              </div>
+              <div class="job-status">
+                {#if job.status === 'processing'}
+                  <span class="status processing">{job.progress.toFixed(0)}%</span>
+                {:else if job.status === 'completed'}
+                  <span class="status completed">Done</span>
+                {:else if job.status === 'failed'}
+                  <span class="status failed">Failed</span>
+                {:else}
+                  <span class="status pending">Pending</span>
+                {/if}
+                {#if job.status === 'completed' || job.status === 'failed'}
+                  <button class="delete-btn" on:click={(e) => deleteJob(job, e)}>x</button>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
   </div>
 </main>
 
 <style>
+  :global(body) {
+    margin: 0;
+    padding: 0;
+    background: #0a0a12;
+    color: #eee;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+
   main {
-    max-width: 1200px;
+    max-width: 1400px;
     margin: 0 auto;
     padding: 20px;
   }
 
-  .warning {
-    background: #7c2d12;
-    border: 1px solid #c2410c;
-    color: #fed7aa;
-    padding: 12px 16px;
-    border-radius: 8px;
-    margin-bottom: 20px;
-    font-size: 0.9rem;
-  }
-
   header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+    text-align: center;
     margin-bottom: 30px;
-    padding-bottom: 15px;
+    padding-bottom: 20px;
     border-bottom: 1px solid #333;
   }
 
   h1 {
-    font-size: 1.5rem;
+    font-size: 2rem;
     font-weight: 600;
+    margin: 0;
   }
 
-  .status {
-    display: flex;
-    gap: 15px;
-    align-items: center;
-  }
-
-  .connected {
-    color: #4ade80;
-  }
-
-  .disconnected {
-    color: #f87171;
-  }
-
-  .fps {
-    color: #60a5fa;
-    font-family: monospace;
+  .subtitle {
+    color: #888;
+    margin: 8px 0 0 0;
   }
 
   .container {
     display: flex;
     flex-direction: column;
-    gap: 30px;
+    gap: 24px;
   }
 
   .video-grid {
@@ -429,21 +494,20 @@
   .video-box {
     background: #16213e;
     border-radius: 12px;
-    padding: 15px;
+    padding: 16px;
   }
 
   .video-box h3 {
     font-size: 0.9rem;
     font-weight: 500;
-    margin-bottom: 10px;
+    margin: 0 0 12px 0;
     color: #888;
   }
 
-  .video-box video,
-  .video-box img {
+  .video-box video {
     width: 100%;
     aspect-ratio: 1;
-    object-fit: cover;
+    object-fit: contain;
     border-radius: 8px;
     background: #0f0f1a;
   }
@@ -452,11 +516,74 @@
     width: 100%;
     aspect-ratio: 1;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
     background: #0f0f1a;
     border-radius: 8px;
     color: #666;
+    gap: 12px;
+  }
+
+  .placeholder.processing {
+    color: #60a5fa;
+  }
+
+  .progress-container {
+    width: 80%;
+    height: 8px;
+    background: #1f2937;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+    transition: width 0.3s ease;
+  }
+
+  .progress-percent {
+    font-size: 1.5rem;
+    font-weight: 600;
+  }
+
+  .playback-controls {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    align-items: center;
+    padding: 12px;
+    background: #16213e;
+    border-radius: 12px;
+  }
+
+  .playback-controls button {
+    background: #3b82f6;
+    border: none;
+    color: white;
+    padding: 10px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+
+  .playback-controls button:hover {
+    background: #2563eb;
+  }
+
+  .sync-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #888;
+    cursor: pointer;
+    margin-left: 20px;
+  }
+
+  .sync-toggle input {
+    width: 18px;
+    height: 18px;
   }
 
   .controls {
@@ -465,13 +592,23 @@
     padding: 20px;
     display: flex;
     flex-direction: column;
-    gap: 15px;
+    gap: 16px;
+  }
+
+  .control-row {
+    display: flex;
+    gap: 20px;
   }
 
   .control-group {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    flex: 1;
+  }
+
+  .source-group {
+    flex: 2;
   }
 
   .control-group label {
@@ -480,10 +617,15 @@
     font-weight: 500;
   }
 
-  .source-buttons {
+  .source-options {
     display: flex;
-    gap: 10px;
+    gap: 12px;
     flex-wrap: wrap;
+  }
+
+  .selected-file {
+    font-size: 0.8rem;
+    color: #60a5fa;
   }
 
   button, select, .file-button {
@@ -497,13 +639,13 @@
     transition: all 0.2s;
   }
 
-  button:hover, select:hover, .file-button:hover {
+  button:hover:not(:disabled), select:hover, .file-button:hover {
     background: #374151;
   }
 
-  button.active, select.active, .file-button.active {
-    background: #3b82f6;
-    border-color: #3b82f6;
+  button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .file-button {
@@ -522,6 +664,7 @@
     border-radius: 8px;
     font-size: 0.95rem;
     width: 100%;
+    box-sizing: border-box;
   }
 
   input[type="text"]:focus {
@@ -529,9 +672,135 @@
     border-color: #3b82f6;
   }
 
-  @media (max-width: 768px) {
+  .process-btn {
+    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+    border: none;
+    padding: 14px 28px;
+    font-size: 1rem;
+    font-weight: 600;
+    align-self: center;
+  }
+
+  .process-btn:hover:not(:disabled) {
+    background: linear-gradient(135deg, #2563eb, #7c3aed);
+  }
+
+  .history {
+    background: #16213e;
+    border-radius: 12px;
+    padding: 16px;
+  }
+
+  .history h3 {
+    font-size: 0.9rem;
+    font-weight: 500;
+    margin: 0 0 12px 0;
+    color: #888;
+  }
+
+  .job-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .job-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    background: #1f2937;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .job-item:hover {
+    background: #374151;
+  }
+
+  .job-item.completed {
+    border-left: 3px solid #4ade80;
+  }
+
+  .job-item.failed {
+    border-left: 3px solid #f87171;
+  }
+
+  .job-item.processing {
+    border-left: 3px solid #60a5fa;
+  }
+
+  .job-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .job-name {
+    font-size: 0.9rem;
+  }
+
+  .job-prompt {
+    font-size: 0.75rem;
+    color: #888;
+  }
+
+  .job-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .status {
+    font-size: 0.8rem;
+    padding: 4px 8px;
+    border-radius: 4px;
+  }
+
+  .status.completed {
+    background: #166534;
+    color: #4ade80;
+  }
+
+  .status.failed {
+    background: #7f1d1d;
+    color: #f87171;
+  }
+
+  .status.processing {
+    background: #1e3a5f;
+    color: #60a5fa;
+  }
+
+  .status.pending {
+    background: #374151;
+    color: #9ca3af;
+  }
+
+  .delete-btn {
+    background: transparent;
+    border: none;
+    color: #888;
+    padding: 4px 8px;
+    font-size: 1rem;
+    cursor: pointer;
+  }
+
+  .delete-btn:hover {
+    color: #f87171;
+    background: transparent;
+  }
+
+  @media (max-width: 900px) {
     .video-grid {
       grid-template-columns: 1fr;
+    }
+
+    .control-row {
+      flex-direction: column;
     }
   }
 </style>

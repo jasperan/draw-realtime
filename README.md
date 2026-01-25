@@ -1,17 +1,18 @@
-# StreamDiffusion Real-Time Demo
+# StreamDiffusion Video-to-Video Demo
 
-Real-time AI video filter demo using [StreamDiffusion](https://github.com/cumulo-autumn/StreamDiffusion). Transform webcam feeds or video files with AI-generated styles in real-time.
+Transform videos with AI-powered diffusion using [StreamDiffusion](https://github.com/cumulo-autumn/StreamDiffusion). Upload or select a video, apply style prompts, and compare input/output side-by-side.
 
 ## Features
 
-- **Real-time processing** - 30+ FPS on modern GPUs with TensorRT acceleration
+- **Video-to-Video processing** - Transform entire videos with AI styles
+- **Side-by-side comparison** - Input and output videos with synchronized playback
 - **Multiple input sources**:
-  - Webcam (live camera feed)
-  - MP4 upload (from browser)
-  - Server videos (pre-loaded files)
+  - Upload MP4 from browser
+  - Server-side video library
 - **Model selection** - Switch between SD-Turbo and SD 1.5 + LCM-LoRA
-- **Live prompt editing** - Change the style prompt without restarting
-- **Web UI** - Clean, minimal interface accessible from any browser
+- **Custom prompts** - Any text prompt to define the transformation style
+- **Progress tracking** - Real-time progress bar during processing
+- **Job history** - View and reload previous processing results
 
 ## Quick Start
 
@@ -20,6 +21,7 @@ Real-time AI video filter demo using [StreamDiffusion](https://github.com/cumulo
 - NVIDIA GPU with CUDA support (RTX 2060+ recommended)
 - [Miniconda](https://docs.conda.io/en/latest/miniconda.html) or Anaconda
 - Node.js 18+ (for frontend build)
+- ffmpeg (for video encoding)
 
 ### Installation
 
@@ -78,11 +80,17 @@ Then open http://localhost:7860 in your browser.
 
 ## Usage
 
+### Workflow
+
+1. **Select a video** - Upload an MP4 or choose from server videos
+2. **Configure settings** - Select model and enter a style prompt
+3. **Process** - Click "Process Video" and wait for completion
+4. **Compare** - Play both videos side-by-side with synchronized controls
+
 ### Input Sources
 
 | Source | Description |
 |--------|-------------|
-| **Webcam** | Live camera feed from your device |
 | **Upload MP4** | Upload a video file from your computer |
 | **Server Videos** | Select from pre-loaded videos on the server |
 
@@ -103,6 +111,13 @@ Enter any text prompt to change the style. Examples:
 - `anime character, studio ghibli style`
 - `zombie horror, dark atmosphere, cinematic`
 
+### Playback Controls
+
+- **Play Both** - Start both videos simultaneously
+- **Pause Both** - Pause both videos
+- **Restart** - Reset both to beginning and play
+- **Sync Playback** - Toggle synchronized seeking
+
 ## Project Structure
 
 ```
@@ -111,28 +126,44 @@ draw-realtime/
 │   ├── main.py            # FastAPI server
 │   ├── pipeline.py        # StreamDiffusion wrapper
 │   ├── video_source.py    # Video file handling
+│   ├── video_processor.py # Batch video processing
 │   └── config.py          # Configuration
 ├── frontend/              # Svelte web UI
 │   ├── src/
 │   │   └── App.svelte     # Main UI component
 │   └── build/             # Production build
 ├── videos/                # Server-side video files
+├── uploads/               # User uploaded videos
+├── outputs/               # Processed output videos
 ├── engines/               # TensorRT cached engines
 ├── StreamDiffusion/       # StreamDiffusion library
 ├── requirements.txt
 └── start.sh               # Launch script
 ```
 
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/settings` | GET | Get app configuration |
+| `/api/videos` | GET | List server-side videos |
+| `/api/upload` | POST | Upload a video file |
+| `/api/process` | POST | Start video processing |
+| `/api/job/{id}` | GET | Get job status |
+| `/api/jobs` | GET | List all jobs |
+| `/api/output/{file}` | GET | Download processed video |
+| `/api/input/{file}` | GET | Download input video |
+
 ## Performance
 
-Expected FPS with TensorRT acceleration:
+Processing time depends on video length and GPU:
 
-| GPU | Resolution | FPS |
-|-----|------------|-----|
-| RTX 4090 | 512x512 | 90-100 |
-| RTX 3080 | 512x512 | 50-60 |
-| RTX 3060 | 512x512 | 30-40 |
-| RTX 2060 | 512x512 | 15-25 |
+| GPU | 10s Video @ 30fps | Notes |
+|-----|-------------------|-------|
+| RTX 4090 | ~30s | Full TensorRT |
+| RTX 3080 | ~60s | Full TensorRT |
+| RTX 3060 | ~120s | xformers fallback |
+| RTX 2060 | ~180s | xformers fallback |
 
 ## Configuration
 
@@ -149,16 +180,21 @@ DEBUG=true            # Enable debug logging
 ## Troubleshooting
 
 ### TensorRT compilation fails
-The system will automatically fall back to xformers acceleration (30-50% slower but still real-time).
+The system will automatically fall back to xformers acceleration (slower but still functional).
 
 ### Out of memory
 - Reduce resolution in `app/config.py` (default: 512x512)
 - Use SD-Turbo instead of SD 1.5 + LCM
+- Process shorter video clips
 
-### Webcam not working
-- Ensure browser has camera permissions
+### Video won't play in browser
+- Ensure ffmpeg is installed for H.264 encoding
 - Try a different browser (Chrome recommended)
-- Check if another application is using the camera
+
+### Processing is slow
+- Check if TensorRT acceleration is working (see logs)
+- Reduce video length or resolution
+- Use SD-Turbo model
 
 ## Technology
 
@@ -168,6 +204,8 @@ Built with:
 - [TensorRT](https://developer.nvidia.com/tensorrt) - NVIDIA inference optimization
 - [FastAPI](https://fastapi.tiangolo.com/) - Python web framework
 - [Svelte](https://svelte.dev/) - Frontend framework
+- [OpenCV](https://opencv.org/) - Video processing
+- [ffmpeg](https://ffmpeg.org/) - Video encoding
 
 ## References
 

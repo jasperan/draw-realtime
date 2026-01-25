@@ -1,10 +1,23 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
 
+  // Generate UUID (works over HTTP too)
+  function generateUUID(): string {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+      return crypto.randomUUID();
+    }
+    // Fallback for non-secure contexts
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+      const r = Math.random() * 16 | 0;
+      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
+
   // State
   let settings: any = null;
   let connected = false;
-  let userId = crypto.randomUUID();
+  let userId = generateUUID();
   let ws: WebSocket | null = null;
   let streamUrl = '';
 

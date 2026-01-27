@@ -11,6 +11,8 @@ xformers
 
 # Diffusion
 diffusers==0.24.0
+# For FLUX.2 Klein support, install diffusers from main:
+# pip install git+https://github.com/huggingface/diffusers -U
 transformers==4.36.0
 accelerate==0.25.0
 huggingface_hub==0.20.3

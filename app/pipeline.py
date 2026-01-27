@@ -30,6 +30,7 @@ class Pipeline:
         self.current_pipeline_type: Optional[str] = None
         self.stream: Optional[StreamDiffusionWrapper] = None  # For StreamDiffusion
         self.diffusers_pipe: Optional[Any] = None  # For Diffusers AutoPipeline
+        self.flux_pipe: Optional[Any] = None  # For FLUX.2 Klein pipeline
         self.current_prompt = DEFAULT_PROMPT
         self.current_negative_prompt = DEFAULT_NEGATIVE_PROMPT
 
@@ -52,13 +53,18 @@ class Pipeline:
             if model_config.pipeline_type == "diffusers" and self.diffusers_pipe is not None:
                 print(f"Model {model_key} already loaded")
                 return True
+            if model_config.pipeline_type == "flux" and self.flux_pipe is not None:
+                print(f"Model {model_key} already loaded")
+                return True
 
         # Clean up existing models
         self._cleanup()
 
         print(f"Loading model: {model_config.description}")
 
-        if model_config.pipeline_type == "diffusers":
+        if model_config.pipeline_type == "flux":
+            return self._load_flux_model(model_key, model_config)
+        elif model_config.pipeline_type == "diffusers":
             return self._load_diffusers_model(model_key, model_config)
         else:
             return self._load_streamdiffusion_model(model_key, model_config)
@@ -71,6 +77,9 @@ class Pipeline:
         if self.diffusers_pipe is not None:
             del self.diffusers_pipe
             self.diffusers_pipe = None
+        if self.flux_pipe is not None:
+            del self.flux_pipe
+            self.flux_pipe = None
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -107,6 +116,31 @@ class Pipeline:
 
         except Exception as e:
             print(f"Failed to load Diffusers model {model_key}: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def _load_flux_model(self, model_key: str, model_config) -> bool:
+        """Load a model using the FLUX.2 Klein pipeline."""
+        try:
+            from diffusers import Flux2KleinPipeline
+
+            print(f"Loading FLUX.2 Klein pipeline: {model_config.id}")
+
+            self.flux_pipe = Flux2KleinPipeline.from_pretrained(
+                model_config.id,
+                torch_dtype=torch.bfloat16,  # FLUX requires bfloat16
+            ).to(self.device)
+
+            self.flux_pipe.set_progress_bar_config(disable=True)
+
+            self.current_model_key = model_key
+            self.current_pipeline_type = "flux"
+            print(f"Model {model_key} loaded successfully")
+            return True
+
+        except Exception as e:
+            print(f"Failed to load FLUX model {model_key}: {e}")
             import traceback
             traceback.print_exc()
             return False
@@ -200,6 +234,15 @@ class Pipeline:
         if negative_prompt and negative_prompt != self.current_negative_prompt:
             self.current_negative_prompt = negative_prompt
 
+    def get_output_resolution(self) -> tuple[int, int]:
+        """Get the output resolution for the currently loaded model."""
+        if self.current_model_key and self.current_model_key in MODELS:
+            model_config = MODELS[self.current_model_key]
+            w = model_config.width or config.width
+            h = model_config.height or config.height
+            return (w, h)
+        return (config.width, config.height)
+
     def predict(self, image: Union[Image.Image, np.ndarray]) -> Optional[Image.Image]:
         """Process an image through the pipeline."""
         try:
@@ -207,11 +250,26 @@ class Pipeline:
             if isinstance(image, np.ndarray):
                 image = Image.fromarray(image)
 
-            # Resize to model dimensions
-            image = image.resize((config.width, config.height))
+            # Get the target resolution for the active model
+            out_w, out_h = self.get_output_resolution()
 
-            if self.current_pipeline_type == "diffusers" and self.diffusers_pipe is not None:
+            if self.current_pipeline_type == "flux" and self.flux_pipe is not None:
+                # Use FLUX.2 Klein pipeline (in-context conditioning)
+                model_config = MODELS[self.current_model_key]
+                image = image.resize((out_w, out_h))
+                output = self.flux_pipe(
+                    prompt=self.current_prompt,
+                    image=image,
+                    height=out_h,
+                    width=out_w,
+                    guidance_scale=model_config.guidance_scale,
+                    num_inference_steps=model_config.num_inference_steps,
+                ).images[0]
+                return output
+
+            elif self.current_pipeline_type == "diffusers" and self.diffusers_pipe is not None:
                 # Use Diffusers pipeline
+                image = image.resize((config.width, config.height))
                 model_config = MODELS[self.current_model_key]
                 output = self.diffusers_pipe(
                     prompt=self.current_prompt,
@@ -225,6 +283,7 @@ class Pipeline:
 
             elif self.stream is not None:
                 # Use StreamDiffusion
+                image = image.resize((config.width, config.height))
                 image_tensor = self.stream.preprocess_image(image)
                 output = self.stream(image=image_tensor)
                 return output

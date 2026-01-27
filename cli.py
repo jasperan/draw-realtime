@@ -148,9 +148,10 @@ def process_video(
         pipeline.update_prompt(prompt)
 
     # Create output video writer (temp file first)
+    out_w, out_h = pipeline.get_output_resolution()
     temp_path = output_path.replace('.mp4', '_temp.mp4')
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(temp_path, fourcc, fps, (config.width, config.height))
+    out = cv2.VideoWriter(temp_path, fourcc, fps, (out_w, out_h))
 
     start_time = time.time()
 

@@ -145,13 +145,14 @@ class VideoProcessor:
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-            # Create output video writer
+            # Create output video writer at model-specific resolution
+            out_w, out_h = pipeline.get_output_resolution()
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             out = cv2.VideoWriter(
                 job.output_path,
                 fourcc,
                 job.fps,
-                (config.width, config.height)  # Output at model resolution
+                (out_w, out_h)
             )
 
             frame_idx = 0
@@ -170,8 +171,8 @@ class VideoProcessor:
                 # Process through pipeline
                 output_image = pipeline.predict(pil_image)
 
-                # Resize input frame for preview (always)
-                input_resized = cv2.resize(frame, (config.width, config.height))
+                # Resize input frame for preview (match output resolution)
+                input_resized = cv2.resize(frame, (out_w, out_h))
                 
                 if output_image is not None:
                     # Convert back to BGR for OpenCV

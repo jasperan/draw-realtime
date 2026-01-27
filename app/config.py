@@ -1,6 +1,6 @@
 """Configuration for StreamDiffusion real-time demo."""
 
-from typing import Dict, Any, Literal
+from typing import Dict, Any, Literal, Optional
 from pydantic import BaseModel
 import os
 
@@ -10,9 +10,12 @@ class ModelConfig(BaseModel):
     id: str
     use_lcm_lora: bool = False
     description: str = ""
-    pipeline_type: Literal["streamdiffusion", "diffusers"] = "streamdiffusion"
+    pipeline_type: Literal["streamdiffusion", "diffusers", "flux"] = "streamdiffusion"
     lora_id: str = ""  # Optional LoRA to load
-    num_inference_steps: int = 1  # For diffusers pipeline
+    num_inference_steps: int = 1  # For diffusers/flux pipeline
+    guidance_scale: Optional[float] = None  # Per-model guidance scale
+    width: Optional[int] = None  # Per-model output width (overrides config.width)
+    height: Optional[int] = None  # Per-model output height (overrides config.height)
 
 
 # Available model presets
@@ -36,6 +39,15 @@ MODELS: Dict[str, ModelConfig] = {
         pipeline_type="diffusers",
         lora_id="ByteDance/Hyper-SD",
         num_inference_steps=1,
+    ),
+    "flux2-klein": ModelConfig(
+        id="black-forest-labs/FLUX.2-klein-4B",
+        description="FLUX.2 Klein 4B (high quality, in-context img2img)",
+        pipeline_type="flux",
+        num_inference_steps=4,
+        guidance_scale=1.0,
+        width=1024,
+        height=1024,
     ),
 }
 

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import OutputGallery from './OutputGallery.svelte';
 
   // State
   let settings: any = null;
@@ -537,6 +538,9 @@
         </div>
       </div>
     {/if}
+
+    <!-- Output Library -->
+    <OutputGallery />
   </div>
 </main>
 

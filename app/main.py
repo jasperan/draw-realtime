@@ -6,8 +6,10 @@ import logging
 import mimetypes
 import os
 import shutil
+import subprocess
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -296,6 +298,144 @@ class App:
                 )
             except Exception:
                 raise HTTPException(status_code=404, detail="Preview not found")
+
+        @self.app.get("/api/outputs")
+        async def list_outputs():
+            """List all output videos with metadata."""
+            processor = get_processor()
+            outputs_dir = processor.outputs_dir
+            thumbnails_dir = outputs_dir.parent / "thumbnails"
+            thumbnails_dir.mkdir(exist_ok=True)
+
+            outputs = []
+            for filepath in outputs_dir.glob("*.mp4"):
+                try:
+                    stat = filepath.stat()
+                    size_bytes = stat.st_size
+
+                    # Skip tiny/corrupted files
+                    if size_bytes < 1000:
+                        continue
+
+                    # Get video metadata using ffprobe
+                    duration = 0
+                    width = 0
+                    height = 0
+                    try:
+                        result = subprocess.run(
+                            [
+                                "ffprobe", "-v", "error",
+                                "-select_streams", "v:0",
+                                "-show_entries", "stream=width,height,duration",
+                                "-of", "csv=p=0",
+                                str(filepath)
+                            ],
+                            capture_output=True,
+                            text=True,
+                            timeout=5
+                        )
+                        if result.returncode == 0 and result.stdout.strip():
+                            parts = result.stdout.strip().split(",")
+                            if len(parts) >= 3:
+                                width = int(parts[0]) if parts[0] else 0
+                                height = int(parts[1]) if parts[1] else 0
+                                duration = float(parts[2]) if parts[2] else 0
+                    except Exception:
+                        pass
+
+                    # Format size
+                    if size_bytes >= 1024 * 1024:
+                        size_human = f"{size_bytes / (1024 * 1024):.1f} MB"
+                    else:
+                        size_human = f"{size_bytes / 1024:.1f} KB"
+
+                    outputs.append({
+                        "filename": filepath.name,
+                        "size_bytes": size_bytes,
+                        "size_human": size_human,
+                        "duration": round(duration, 2),
+                        "width": width,
+                        "height": height,
+                        "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                        "thumbnail": f"/api/output-thumbnail/{filepath.name}"
+                    })
+                except Exception as e:
+                    logger.warning(f"Error reading output file {filepath}: {e}")
+                    continue
+
+            # Sort by creation date (newest first)
+            outputs.sort(key=lambda x: x["created_at"], reverse=True)
+            return JSONResponse({"outputs": outputs})
+
+        @self.app.get("/api/output-thumbnail/{filename}")
+        async def get_output_thumbnail(filename: str):
+            """Get or generate a thumbnail for an output video."""
+            processor = get_processor()
+
+            # Security: validate filename
+            if ".." in filename or "/" in filename or "\\" in filename:
+                raise HTTPException(status_code=400, detail="Invalid filename")
+
+            video_path = processor.outputs_dir / filename
+            if not video_path.exists():
+                raise HTTPException(status_code=404, detail="Video not found")
+
+            # Thumbnail path
+            thumbnails_dir = processor.outputs_dir.parent / "thumbnails"
+            thumbnails_dir.mkdir(exist_ok=True)
+            thumbnail_name = filename.rsplit(".", 1)[0] + ".jpg"
+            thumbnail_path = thumbnails_dir / thumbnail_name
+
+            # Generate thumbnail if it doesn't exist or video is newer
+            if not thumbnail_path.exists() or video_path.stat().st_mtime > thumbnail_path.stat().st_mtime:
+                try:
+                    subprocess.run(
+                        [
+                            "ffmpeg", "-y", "-i", str(video_path),
+                            "-ss", "1", "-vframes", "1",
+                            "-vf", "scale=320:-1",
+                            str(thumbnail_path)
+                        ],
+                        capture_output=True,
+                        timeout=10
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to generate thumbnail for {filename}: {e}")
+                    raise HTTPException(status_code=500, detail="Failed to generate thumbnail")
+
+            if not thumbnail_path.exists():
+                raise HTTPException(status_code=404, detail="Thumbnail not found")
+
+            return FileResponse(
+                path=str(thumbnail_path),
+                media_type="image/jpeg",
+                filename=thumbnail_name,
+            )
+
+        @self.app.delete("/api/output/{filename}")
+        async def delete_output(filename: str):
+            """Delete an output video file."""
+            processor = get_processor()
+
+            # Security: validate filename
+            if ".." in filename or "/" in filename or "\\" in filename:
+                raise HTTPException(status_code=400, detail="Invalid filename")
+
+            video_path = processor.outputs_dir / filename
+            if not video_path.exists():
+                raise HTTPException(status_code=404, detail="Output not found")
+
+            # Delete video
+            os.remove(video_path)
+
+            # Delete thumbnail if exists
+            thumbnails_dir = processor.outputs_dir.parent / "thumbnails"
+            thumbnail_name = filename.rsplit(".", 1)[0] + ".jpg"
+            thumbnail_path = thumbnails_dir / thumbnail_name
+            if thumbnail_path.exists():
+                os.remove(thumbnail_path)
+
+            return JSONResponse({"status": "deleted", "filename": filename})
 
     def _setup_static(self):
         """Set up static file serving."""

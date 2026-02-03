@@ -193,6 +193,10 @@ engines/
 *.bin
 models/
 !models/.gitkeep
+!models/quantized/.gitkeep
+
+# Benchmark results
+benchmark_results.json
 
 # Video files (large)
 videos/
@@ -216,6 +220,10 @@ uploads/
 
 # Preview frames
 previews/
+
+# Test pipeline outputs and videos
+test_pipelines/outputs/
+test_pipelines/test_videos/
 
 # Temporary files
 *.tmp

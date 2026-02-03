@@ -1,8 +1,16 @@
-"""StreamDiffusion pipeline wrapper with model switching support."""
+"""StreamDiffusion pipeline wrapper with model switching support.
+
+Supports:
+- StreamDiffusion models (SD-Turbo, SD 1.5 + LCM)
+- Diffusers models (Hyper-SDXL)
+- FLUX models (FLUX.2 Klein)
+- 1.58-bit quantized models (BitNet-style PTQ)
+"""
 
 import os
 import sys
 import gc
+from pathlib import Path
 from typing import Optional, Dict, Union, Any
 from PIL import Image
 import torch
@@ -13,6 +21,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "StreamDiffusio
 
 from utils.wrapper import StreamDiffusionWrapper
 from app.config import MODELS, DEFAULT_MODEL, DEFAULT_PROMPT, DEFAULT_NEGATIVE_PROMPT, config
+
+# Quantization support
+from app.quantization import quantize_unet
+from app.quantization.utils import load_quantized_model, get_model_size_mb
 
 
 class Pipeline:
@@ -50,6 +62,9 @@ class Pipeline:
             if model_config.pipeline_type == "streamdiffusion" and self.stream is not None:
                 print(f"Model {model_key} already loaded")
                 return True
+            if model_config.pipeline_type == "streamdiffusion-quantized" and self.stream is not None:
+                print(f"Model {model_key} already loaded")
+                return True
             if model_config.pipeline_type == "diffusers" and self.diffusers_pipe is not None:
                 print(f"Model {model_key} already loaded")
                 return True
@@ -66,6 +81,8 @@ class Pipeline:
             return self._load_flux_model(model_key, model_config)
         elif model_config.pipeline_type == "diffusers":
             return self._load_diffusers_model(model_key, model_config)
+        elif model_config.pipeline_type == "streamdiffusion-quantized":
+            return self._load_quantized_model(model_key, model_config)
         else:
             return self._load_streamdiffusion_model(model_key, model_config)
 
@@ -221,6 +238,86 @@ class Pipeline:
                     return True
                 except Exception as e2:
                     print(f"Fallback also failed: {e2}")
+            return False
+
+    def _load_quantized_model(self, model_key: str, model_config) -> bool:
+        """Load a 1.58-bit quantized StreamDiffusion model.
+
+        This loads the base model via StreamDiffusion, then replaces the U-Net
+        weights with the quantized version.
+        """
+        try:
+            # Get the base model key (e.g., "sd-turbo" from "sd-turbo-1.58bit")
+            base_model_key = model_config.base_model
+            base_config = MODELS.get(base_model_key)
+
+            if not base_config:
+                print(f"Base model {base_model_key} not found in MODELS config")
+                return False
+
+            # Determine quantized model path
+            quantized_path = Path(model_config.quantized_path)
+            if not quantized_path.is_absolute():
+                quantized_path = Path(__file__).parent.parent / quantized_path
+
+            if not quantized_path.exists():
+                print(f"Quantized model not found at: {quantized_path}")
+                print(f"Run 'python scripts/quantize_model.py --model {base_model_key}' first")
+                return False
+
+            print(f"Loading quantized model from: {quantized_path}")
+
+            # First, load the base model with StreamDiffusion
+            # Use xformers instead of TensorRT for quantized models
+            # (TensorRT doesn't support custom quantized layers)
+            self.stream = StreamDiffusionWrapper(
+                model_id_or_path=base_config.id,
+                t_index_list=[35, 45],
+                frame_buffer_size=1,
+                width=config.width,
+                height=config.height,
+                use_tiny_vae=config.use_tiny_vae,
+                warmup=10,
+                acceleration="xformers",  # Force xformers for quantized
+                do_add_noise=False,
+                mode="img2img",
+                output_type="pil",
+                use_denoising_batch=True,
+                cfg_type="none",
+                use_lcm_lora=base_config.use_lcm_lora,
+                use_safety_checker=False,
+                device=self.device,
+                dtype=self.dtype,
+            )
+
+            # Now replace the U-Net weights with quantized version
+            print("Loading quantized U-Net weights...")
+            unet = self.stream.stream.unet
+
+            # Load quantized weights
+            load_quantized_model(unet, str(quantized_path), device=self.device)
+
+            # Log model size
+            model_size = get_model_size_mb(unet)
+            print(f"Quantized U-Net size: {model_size:.2f} MB")
+
+            # Prepare with default prompt
+            self.stream.prepare(
+                prompt=self.current_prompt,
+                negative_prompt=self.current_negative_prompt,
+                num_inference_steps=50,
+                guidance_scale=1.2,
+            )
+
+            self.current_model_key = model_key
+            self.current_pipeline_type = "streamdiffusion-quantized"
+            print(f"Quantized model {model_key} loaded successfully")
+            return True
+
+        except Exception as e:
+            print(f"Failed to load quantized model {model_key}: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def update_prompt(self, prompt: str, negative_prompt: Optional[str] = None):

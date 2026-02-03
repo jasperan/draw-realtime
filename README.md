@@ -1,117 +1,193 @@
-# StreamDiffusion Video-to-Video Demo
+# draw-realtime
 
-Transform videos with AI-powered diffusion using [StreamDiffusion](https://github.com/cumulo-autumn/StreamDiffusion). Upload or select a video, apply style prompts, and compare input/output side-by-side.
+Real-time video-to-video AI diffusion with [StreamDiffusion](https://github.com/cumulo-autumn/StreamDiffusion). Transform videos using AI-powered style transfer with side-by-side comparison, multiple model options, and optional 1.58-bit quantization for faster inference.
 
 ## Features
 
-- **Video-to-Video processing** - Transform entire videos with AI styles
-- **Side-by-side comparison** - Input and output videos with synchronized playback
-- **Multiple input sources**:
-  - Upload MP4 from browser
-  - Server-side video library
-- **Model selection** - Switch between SD-Turbo and SD 1.5 + LCM-LoRA
-- **Custom prompts** - Any text prompt to define the transformation style
-- **Progress tracking** - Real-time progress bar during processing
-- **Job history** - View and reload previous processing results
+### Core Features
+- **Video-to-Video Processing** - Transform entire videos with AI diffusion models
+- **Side-by-Side Comparison** - Synchronized playback of input and output
+- **Multiple Models** - SD-Turbo, SD 1.5 + LCM, Hyper-SDXL, FLUX.2 Klein
+- **1.58-bit Quantization** - BitNet-style PTQ for faster inference and lower memory
+- **Real-time Preview** - Watch generation progress with live frame updates
+- **Multi-Style Generation** - Generate 5 artistic styles from a single video using LLaVA + FLUX
+
+### Input Options
+- Upload MP4 from browser
+- Server-side video library
+- Webcam capture (experimental)
+
+### Output Options
+- Web UI with synchronized playback
+- CLI for batch processing
+- REST API for integration
 
 ## Quick Start
 
 ### Prerequisites
 
-- NVIDIA GPU with CUDA support (RTX 2060+ recommended)
+- NVIDIA GPU with CUDA support (RTX 2060+ recommended, 8GB+ VRAM)
 - [Miniconda](https://docs.conda.io/en/latest/miniconda.html) or Anaconda
-- Node.js 18+ (for frontend build)
-- ffmpeg (for video encoding)
+- Node.js 18+ (for frontend)
+- ffmpeg
 
 ### Installation
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/jasperan/draw-realtime.git
-   cd draw-realtime
-   ```
+```bash
+# Clone repository
+git clone https://github.com/jasperan/draw-realtime.git
+cd draw-realtime
 
-2. **Create conda environment**
-   ```bash
-   conda create -n streamdiffusion python=3.10 -y
-   conda activate streamdiffusion
-   ```
+# Create conda environment
+conda create -n streamdiffusion python=3.10 -y
+conda activate streamdiffusion
 
-3. **Install PyTorch with CUDA**
-   ```bash
-   # For CUDA 11.8
-   pip install torch==2.1.0 torchvision==0.16.0 xformers --index-url https://download.pytorch.org/whl/cu118
+# Install PyTorch with CUDA (choose your CUDA version)
+# For CUDA 11.8:
+pip install torch==2.1.0 torchvision==0.16.0 xformers --index-url https://download.pytorch.org/whl/cu118
 
-   # For CUDA 12.1
-   pip install torch==2.1.0 torchvision==0.16.0 xformers --index-url https://download.pytorch.org/whl/cu121
-   ```
+# For CUDA 12.1:
+pip install torch==2.1.0 torchvision==0.16.0 xformers --index-url https://download.pytorch.org/whl/cu121
 
-4. **Install StreamDiffusion with TensorRT**
-   ```bash
-   pip install git+https://github.com/cumulo-autumn/StreamDiffusion.git@main#egg=streamdiffusion[tensorrt]
-   python -m streamdiffusion.tools.install-tensorrt
-   ```
+# Install StreamDiffusion with TensorRT
+pip install git+https://github.com/cumulo-autumn/StreamDiffusion.git@main#egg=streamdiffusion[tensorrt]
+python -m streamdiffusion.tools.install-tensorrt
 
-5. **Install web dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+# Install project dependencies
+pip install -r requirements.txt
 
-6. **Build frontend**
-   ```bash
-   cd frontend
-   npm install
-   npm run build
-   cd ..
-   ```
+# Build frontend
+cd frontend && npm install && npm run build && cd ..
+```
 
-### Run the Demo
+### Run
 
 ```bash
 ./start.sh
+# Open http://localhost:7860
 ```
 
-Then open http://localhost:7860 in your browser.
-
-**First run notes:**
-- Models will download automatically (~3GB for SD-Turbo)
-- TensorRT engines compile on first run (5-10 minutes)
+**First Run:**
+- Models download automatically (~3GB for SD-Turbo)
+- TensorRT engines compile on first use (5-10 minutes)
 - Subsequent runs start instantly
 
-## Usage
+## Models
 
-### Workflow
+| Model | FPS* | Quality | VRAM | Description |
+|-------|------|---------|------|-------------|
+| **SD-Turbo** | ~94 | Good | 4-5 GB | Default, single-step, fastest |
+| **SD-Turbo 1.58-bit** | ~110+ | Good | 2-3 GB | Quantized, lower memory |
+| **SD 1.5 + LCM** | ~37 | Higher | 5-6 GB | 4-step with LCM-LoRA |
+| **SD 1.5 + LCM 1.58-bit** | ~45+ | Higher | 3-4 GB | Quantized, lower memory |
+| **Hyper-SDXL** | ~20 | SDXL | 8 GB | 1-step SDXL quality |
+| **FLUX.2 Klein** | ~8 | Highest | 10 GB | 4B parameter, best quality |
 
-1. **Select a video** - Upload an MP4 or choose from server videos
-2. **Configure settings** - Select model and enter a style prompt
-3. **Process** - Click "Process Video" and wait for completion
-4. **Compare** - Play both videos side-by-side with synchronized controls
+*FPS measured on RTX 4090
 
-### Input Sources
+## 1.58-bit Quantization
 
-| Source | Description |
-|--------|-------------|
-| **Upload MP4** | Upload a video file from your computer |
-| **Server Videos** | Select from pre-loaded videos on the server |
+This project supports BitNet-style Post-Training Quantization (PTQ) to convert model weights to 1.58-bit ternary format ({-1, 0, +1}). This provides:
 
-To add server-side videos, drop MP4 files in the `videos/` directory.
+- **~8x smaller weights** - Reduced memory bandwidth
+- **15-25% faster inference** - Simpler computations
+- **~50% lower VRAM** - Run on smaller GPUs
+- **Minimal quality loss** - <15% LPIPS degradation
 
-### Models
+### How It Works
 
-| Model | Speed | Quality | Notes |
-|-------|-------|---------|-------|
-| **SD-Turbo** | Fast | Good | Default, single-step inference |
-| **SD 1.5 + LCM** | Medium | Higher | 4-step inference with LCM-LoRA |
-| **Hyper-SDXL** | Fastest | SDXL | 1-step SDXL with Hyper-SD LoRA |
+The quantization uses absmean scaling:
+```
+scale = mean(|W|)           # Per-tensor scale factor
+W_ternary = round(W/scale).clamp(-1, 1)  # Ternarize to {-1, 0, +1}
+```
 
-### Style Presets
+Only the U-Net linear layers are quantized. VAE and text encoder remain in FP16 for quality.
 
-Choose from 12 built-in style presets:
+### Quantizing Models
+
+```bash
+# Quantize SD-Turbo
+python scripts/quantize_model.py --model sd-turbo
+
+# Quantize SD 1.5 + LCM
+python scripts/quantize_model.py --model sd15-lcm
+
+# Quantize both
+python scripts/quantize_model.py --model all
+
+# Skip verification (faster)
+python scripts/quantize_model.py --model sd-turbo --no-verify
+```
+
+Quantized models are saved to `models/quantized/`.
+
+### Using Quantized Models
+
+**Web UI:** Select "SD-Turbo 1.58-bit" or "SD 1.5 + LCM 1.58-bit" from the model dropdown.
+
+**CLI:**
+```bash
+python cli.py input.mp4 -m sd-turbo-1.58bit -s anime-ghibli
+python cli.py input.mp4 -m sd15-lcm-1.58bit -p "oil painting style"
+```
+
+**API:**
+```bash
+curl -X POST http://localhost:7860/api/process \
+  -F "video=@input.mp4" \
+  -F "model=sd-turbo-1.58bit" \
+  -F "prompt=cyberpunk neon city"
+```
+
+### Benchmarking
+
+Compare original vs quantized performance:
+
+```bash
+# Benchmark SD-Turbo
+python scripts/benchmark.py --model sd-turbo --iterations 100
+
+# Benchmark all models
+python scripts/benchmark.py --all --iterations 50
+
+# Quick benchmark (no quality metrics)
+python scripts/benchmark.py --model sd-turbo --no-quality
+```
+
+## CLI Usage
+
+```bash
+# Style preset
+python cli.py input.mp4 -s anime-ghibli
+
+# Custom prompt
+python cli.py input.mp4 -p "oil painting, vibrant colors"
+
+# Specific model
+python cli.py input.mp4 -m sd15-lcm -s fantasy
+
+# Quantized model
+python cli.py input.mp4 -m sd-turbo-1.58bit -s cyberpunk-neon
+
+# Process all server videos
+python cli.py --process-all -s watercolor
+
+# Multi-style generation (LLaVA + FLUX)
+python cli.py multistyle input.mp4
+
+# List options
+python cli.py --list-styles
+python cli.py --list-models
+python cli.py --list-videos
+```
+
+## Style Presets
 
 | Preset | Description |
 |--------|-------------|
 | `anime-ghibli` | Studio Ghibli inspired, soft colors |
-| `anime-cyberpunk` | Anime + cyberpunk, neon, Makoto Shinkai |
+| `anime-cyberpunk` | Anime + cyberpunk, neon, Makoto Shinkai style |
 | `cyberpunk-neon` | Cyberpunk city, neon lights, rain |
 | `oil-painting` | Classical oil painting, rich colors |
 | `watercolor` | Soft watercolor, flowing colors |
@@ -123,139 +199,154 @@ Choose from 12 built-in style presets:
 | `pixel-art` | 16-bit retro pixel art |
 | `sketch` | Pencil sketch, detailed linework |
 
-### Custom Prompts
+## Multi-Style Generation
 
-You can also enter custom prompts. Examples:
-- `cyberpunk robot, neon lights, highly detailed`
-- `oil painting, impressionist style, vibrant colors`
-- `anime character, studio ghibli style`
-- `zombie horror, dark atmosphere, cinematic`
+Generate 5 artistic variations of a video automatically:
 
-### Playback Controls
+```bash
+python cli.py multistyle input.mp4
+```
 
-- **Play Both** - Start both videos simultaneously
-- **Pause Both** - Pause both videos
-- **Restart** - Reset both to beginning and play
-- **Sync Playback** - Toggle synchronized seeking
+This:
+1. Analyzes the video content using LLaVA (local vision model via Ollama)
+2. Generates descriptions of key frames
+3. Creates 5 style variations using FLUX.2 Klein:
+   - Oil painting
+   - Watercolor
+   - Impressionist
+   - Pop Art
+   - Ukiyo-e (Japanese woodblock)
+4. Produces a comparison grid video
+
+**Requirements:** Ollama with `llava` and `llama3.2` models installed.
+
+## API Reference
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/settings` | GET | Get models, presets, configuration |
+| `/api/videos` | GET | List server-side videos |
+| `/api/upload` | POST | Upload a video file |
+| `/api/process` | POST | Start video processing job |
+| `/api/job/{id}` | GET | Get job status and progress |
+| `/api/jobs` | GET | List all jobs |
+| `/api/output/{file}` | GET | Download processed video |
+| `/api/preview/{file}` | GET | Get real-time preview frame |
+| `/api/multistyle/process` | POST | Start multi-style generation |
+| `/api/multistyle/job/{id}` | GET | Get multi-style job status |
 
 ## Project Structure
 
 ```
 draw-realtime/
-├── app/                    # Python backend
-│   ├── main.py            # FastAPI server
-│   ├── pipeline.py        # StreamDiffusion wrapper
-│   ├── video_source.py    # Video file handling
-│   ├── video_processor.py # Batch video processing
-│   └── config.py          # Configuration
-├── frontend/              # Svelte web UI
-│   ├── src/
-│   │   └── App.svelte     # Main UI component
-│   └── build/             # Production build
-├── videos/                # Server-side video files
-├── uploads/               # User uploaded videos
-├── outputs/               # Processed output videos
-├── engines/               # TensorRT cached engines
-├── StreamDiffusion/       # StreamDiffusion library
+├── app/                      # Python backend
+│   ├── main.py              # FastAPI server
+│   ├── pipeline.py          # Model wrapper with switching
+│   ├── config.py            # Models, presets, configuration
+│   ├── video_processor.py   # Batch video processing
+│   ├── multistyle.py        # LLaVA + FLUX multi-style
+│   └── quantization/        # 1.58-bit PTQ module
+│       ├── bitlinear.py     # BitLinear layer implementation
+│       ├── quantize.py      # Quantization functions
+│       └── utils.py         # Save/load utilities
+├── scripts/
+│   ├── quantize_model.py    # One-time quantization script
+│   └── benchmark.py         # Performance comparison
+├── frontend/                 # Svelte web UI
+│   ├── src/App.svelte       # Main UI component
+│   └── build/               # Production build
+├── models/
+│   └── quantized/           # Quantized model weights
+├── videos/                   # Server-side videos
+├── uploads/                  # User uploads
+├── outputs/                  # Processed videos
+├── engines/                  # TensorRT cached engines
+├── StreamDiffusion/          # StreamDiffusion library
+├── cli.py                    # Command-line interface
 ├── requirements.txt
-└── start.sh               # Launch script
+└── start.sh
 ```
-
-## CLI Usage
-
-Process videos from the command line:
-
-```bash
-# Use a style preset
-python cli.py input.mp4 -s anime-ghibli
-
-# Use higher quality model with preset
-python cli.py input.mp4 -s oil-painting -m sd15-lcm
-
-# Custom prompt
-python cli.py input.mp4 -p "your custom prompt here"
-
-# Process all server videos
-python cli.py --process-all -s fantasy
-
-# List available options
-python cli.py --list-styles
-python cli.py --list-models
-python cli.py --list-videos
-```
-
-## API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/settings` | GET | Get app configuration |
-| `/api/videos` | GET | List server-side videos |
-| `/api/upload` | POST | Upload a video file |
-| `/api/process` | POST | Start video processing |
-| `/api/job/{id}` | GET | Get job status |
-| `/api/jobs` | GET | List all jobs |
-| `/api/output/{file}` | GET | Download processed video |
-| `/api/input/{file}` | GET | Download input video |
-| `/api/preview/{file}` | GET | Get real-time preview frame |
-
-## Performance
-
-Processing time depends on video length and GPU:
-
-| GPU | 10s Video @ 30fps | Notes |
-|-----|-------------------|-------|
-| RTX 4090 | ~30s | Full TensorRT |
-| RTX 3080 | ~60s | Full TensorRT |
-| RTX 3060 | ~120s | xformers fallback |
-| RTX 2060 | ~180s | xformers fallback |
 
 ## Configuration
 
-Environment variables (optional):
+Environment variables:
 
 ```bash
-HOST=0.0.0.0          # Server host
+HOST=0.0.0.0          # Server bind address
 PORT=7860             # Server port
-VIDEOS_DIR=videos     # Video files directory
-ENGINES_DIR=engines   # TensorRT engines directory
+VIDEOS_DIR=videos     # Input videos directory
+ENGINES_DIR=engines   # TensorRT engines cache
 DEBUG=true            # Enable debug logging
 ```
 
+Edit `app/config.py` for:
+- Default resolution (512x512)
+- Acceleration backend (tensorrt/xformers)
+- TinyVAE toggle
+- Max queue size
+
+## Performance Tips
+
+### Maximize Speed
+1. Use TensorRT acceleration (default)
+2. Use SD-Turbo or SD-Turbo-1.58bit
+3. Process at 512x512 resolution
+4. Enable TinyVAE (default)
+
+### Minimize VRAM
+1. Use 1.58-bit quantized models
+2. Use SD-Turbo (smallest model)
+3. Reduce resolution in config.py
+4. Process shorter clips
+
+### Best Quality
+1. Use FLUX.2 Klein or SD 1.5 + LCM
+2. Process at native resolution
+3. Use descriptive prompts
+4. Avoid quantized models for final output
+
 ## Troubleshooting
 
-### TensorRT compilation fails
-The system will automatically fall back to xformers acceleration (slower but still functional).
+### TensorRT fails to compile
+System automatically falls back to xformers. Check CUDA version compatibility.
 
 ### Out of memory
-- Reduce resolution in `app/config.py` (default: 512x512)
-- Use SD-Turbo instead of SD 1.5 + LCM
+- Use 1.58-bit quantized models
+- Reduce resolution in `app/config.py`
+- Use SD-Turbo instead of larger models
 - Process shorter video clips
+
+### Quantized model not found
+Run the quantization script first:
+```bash
+python scripts/quantize_model.py --model sd-turbo
+```
 
 ### Video won't play in browser
 - Ensure ffmpeg is installed for H.264 encoding
-- Try a different browser (Chrome recommended)
+- Try Chrome (best compatibility)
 
-### Processing is slow
-- Check if TensorRT acceleration is working (see logs)
-- Reduce video length or resolution
-- Use SD-Turbo model
+### Multi-style fails
+- Ensure Ollama is running with `llava` and `llama3.2` models
+- Check Ollama is accessible at localhost:11434
 
 ## Technology
 
-Built with:
 - [StreamDiffusion](https://github.com/cumulo-autumn/StreamDiffusion) - Real-time diffusion pipeline
-- [Stable Diffusion Turbo](https://huggingface.co/stabilityai/sd-turbo) - Fast image generation
+- [Stable Diffusion Turbo](https://huggingface.co/stabilityai/sd-turbo) - Fast single-step model
+- [FLUX.2 Klein](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) - High-quality 4B model
+- [LCM-LoRA](https://huggingface.co/latent-consistency/lcm-lora-sdv1-5) - Latent consistency LoRA
 - [TensorRT](https://developer.nvidia.com/tensorrt) - NVIDIA inference optimization
+- [BitNet](https://arxiv.org/abs/2310.11453) - 1.58-bit quantization inspiration
 - [FastAPI](https://fastapi.tiangolo.com/) - Python web framework
 - [Svelte](https://svelte.dev/) - Frontend framework
-- [OpenCV](https://opencv.org/) - Video processing
-- [ffmpeg](https://ffmpeg.org/) - Video encoding
 
 ## References
 
-- [StreamDiffusion Paper](https://arxiv.org/abs/2312.12491)
-- [LCM-LoRA](https://huggingface.co/latent-consistency/lcm-lora-sdv1-5)
-- [TinyVAE (TAESD)](https://huggingface.co/madebyollin/taesd)
+- [StreamDiffusion: Real-Time Interactive Generation](https://arxiv.org/abs/2312.12491)
+- [BitNet: 1-bit LLMs](https://arxiv.org/abs/2310.11453)
+- [The Era of 1-bit LLMs](https://arxiv.org/abs/2402.17764) - 1.58-bit quantization
+- [FLUX 1.58-bit](https://huggingface.co/black-forest-labs/flux1-schnell-1.58bit) - Reference implementation
 
 ## License
 
@@ -263,6 +354,8 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 ## Acknowledgements
 
-- [cumulo-autumn/StreamDiffusion](https://github.com/cumulo-autumn/StreamDiffusion) for the core pipeline
-- Stability AI for SD-Turbo
+- [cumulo-autumn/StreamDiffusion](https://github.com/cumulo-autumn/StreamDiffusion)
+- [Stability AI](https://stability.ai/) for SD-Turbo
+- [Black Forest Labs](https://blackforestlabs.ai/) for FLUX
+- [Microsoft Research](https://github.com/microsoft/BitNet) for BitNet
 - The Hugging Face community

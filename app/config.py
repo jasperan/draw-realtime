@@ -10,12 +10,15 @@ class ModelConfig(BaseModel):
     id: str
     use_lcm_lora: bool = False
     description: str = ""
-    pipeline_type: Literal["streamdiffusion", "diffusers", "flux"] = "streamdiffusion"
+    pipeline_type: Literal["streamdiffusion", "streamdiffusion-quantized", "diffusers", "flux"] = "streamdiffusion"
     lora_id: str = ""  # Optional LoRA to load
     num_inference_steps: int = 1  # For diffusers/flux pipeline
     guidance_scale: Optional[float] = None  # Per-model guidance scale
     width: Optional[int] = None  # Per-model output width (overrides config.width)
     height: Optional[int] = None  # Per-model output height (overrides config.height)
+    # Quantization-specific fields
+    base_model: str = ""  # For quantized models: the base model key
+    quantized_path: str = ""  # Path to quantized weights
 
 
 # Available model presets
@@ -48,6 +51,23 @@ MODELS: Dict[str, ModelConfig] = {
         guidance_scale=1.0,
         width=1024,
         height=1024,
+    ),
+    # 1.58-bit Quantized Models (BitNet-style PTQ)
+    "sd-turbo-1.58bit": ModelConfig(
+        id="stabilityai/sd-turbo",
+        use_lcm_lora=False,
+        description="SD-Turbo 1.58-bit (faster, lower memory)",
+        pipeline_type="streamdiffusion-quantized",
+        base_model="sd-turbo",
+        quantized_path="models/quantized/sd-turbo-1.58bit",
+    ),
+    "sd15-lcm-1.58bit": ModelConfig(
+        id="runwayml/stable-diffusion-v1-5",
+        use_lcm_lora=True,
+        description="SD 1.5 + LCM 1.58-bit (faster, lower memory)",
+        pipeline_type="streamdiffusion-quantized",
+        base_model="sd15-lcm",
+        quantized_path="models/quantized/sd15-lcm-1.58bit",
     ),
 }
 

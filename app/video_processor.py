@@ -245,9 +245,25 @@ class VideoProcessor:
             job.status = JobStatus.FAILED
             job.error = str(e)
             job.completed_at = time.time()
-            print(f"Processing error: {e}")
+            print(f"Processing error for job {job_id}: {e}")
             import traceback
             traceback.print_exc()
+
+            # Clean up partial output file
+            try:
+                if os.path.exists(job.output_path):
+                    os.remove(job.output_path)
+            except OSError:
+                pass
+
+            # Clean up any temp H.264 re-encode file
+            try:
+                h264_path = job.output_path.replace('.mp4', '_h264.mp4')
+                if os.path.exists(h264_path):
+                    os.remove(h264_path)
+            except OSError:
+                pass
+
             return False
 
     def get_job(self, job_id: str) -> Optional[ProcessingJob]:

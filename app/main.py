@@ -104,6 +104,8 @@ class App:
         @self.app.post("/api/upload")
         async def upload_video(file: UploadFile = File(...)):
             """Upload a video file for processing."""
+            MAX_UPLOAD_SIZE = 500 * 1024 * 1024  # 500 MB
+
             processor = get_processor()
 
             # Validate file type
@@ -125,6 +127,15 @@ class App:
                     shutil.copyfileobj(file.file, buffer)
             finally:
                 file.file.close()
+
+            # Enforce file size limit
+            file_size = upload_path.stat().st_size
+            if file_size > MAX_UPLOAD_SIZE:
+                os.remove(upload_path)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large ({file_size / (1024*1024):.0f} MB). Maximum: {MAX_UPLOAD_SIZE / (1024*1024):.0f} MB",
+                )
 
             # Get video info
             cap = cv2.VideoCapture(str(upload_path))

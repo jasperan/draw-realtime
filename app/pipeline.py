@@ -91,18 +91,43 @@ class Pipeline:
             return self._load_streamdiffusion_model(model_key, model_config)
 
     def _cleanup(self):
-        """Clean up any loaded models."""
+        """Clean up any loaded models and free GPU memory."""
+        # Clear references first, then collect
         if self.stream is not None:
+            try:
+                # StreamDiffusion may hold internal references
+                if hasattr(self.stream, 'stream') and self.stream.stream is not None:
+                    del self.stream.stream
+            except Exception:
+                pass
             del self.stream
             self.stream = None
+
         if self.diffusers_pipe is not None:
+            try:
+                if hasattr(self.diffusers_pipe, 'components'):
+                    for component in self.diffusers_pipe.components.values():
+                        if hasattr(component, 'to'):
+                            component.to('cpu')
+            except Exception:
+                pass
             del self.diffusers_pipe
             self.diffusers_pipe = None
+
         if self.flux_pipe is not None:
+            try:
+                if hasattr(self.flux_pipe, 'components'):
+                    for component in self.flux_pipe.components.values():
+                        if hasattr(component, 'to'):
+                            component.to('cpu')
+            except Exception:
+                pass
             del self.flux_pipe
             self.flux_pipe = None
+
         gc.collect()
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def _load_diffusers_model(self, model_key: str, model_config) -> bool:
         """Load a model using Diffusers AutoPipeline."""

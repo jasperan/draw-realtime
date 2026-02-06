@@ -26,6 +26,7 @@ from app.config import config, MODELS, DEFAULT_MODEL, DEFAULT_PROMPT, PROMPT_PRE
 from app.pipeline import get_pipeline
 from app.video_source import get_available_videos, get_video_path, VideoSource
 from app.video_processor import get_processor, JobStatus
+from app.multistyle import get_multistyle_processor, STYLES as MULTISTYLE_STYLES
 
 # Fix mime type on Windows
 mimetypes.add_type("application/javascript", ".js")
@@ -436,6 +437,91 @@ class App:
                 os.remove(thumbnail_path)
 
             return JSONResponse({"status": "deleted", "filename": filename})
+
+        # ============ Multi-Style API Endpoints ============
+
+        @self.app.get("/api/multistyle/styles")
+        async def get_multistyle_styles():
+            """Get available multi-style painting styles."""
+            return JSONResponse({
+                "styles": [
+                    {"slug": slug, "description": desc}
+                    for slug, desc in MULTISTYLE_STYLES
+                ]
+            })
+
+        @self.app.post("/api/multistyle/process")
+        async def process_multistyle(
+            background_tasks: BackgroundTasks,
+            video_name: str = Form(None),
+            uploaded_file: str = Form(None),
+            custom_description: str = Form(None),
+        ):
+            """Start multi-style video processing with LLaVA + FLUX."""
+            processor = get_processor()
+            multistyle = get_multistyle_processor()
+            pipeline = get_pipeline()
+
+            # Determine input path
+            if uploaded_file:
+                input_path = str(processor.uploads_dir / uploaded_file)
+                if not os.path.exists(input_path):
+                    raise HTTPException(status_code=404, detail="Uploaded file not found")
+            elif video_name:
+                input_path = get_video_path(video_name)
+                if not input_path:
+                    raise HTTPException(status_code=404, detail="Video not found")
+            else:
+                raise HTTPException(status_code=400, detail="No video specified")
+
+            # Create job
+            try:
+                job = multistyle.create_job(input_path)
+                if custom_description:
+                    job.description = custom_description
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+
+            # Start processing in background
+            background_tasks.add_task(multistyle.process_job, job.job_id, pipeline)
+
+            return JSONResponse(job.to_dict())
+
+        @self.app.get("/api/multistyle/job/{job_id}")
+        async def get_multistyle_job_status(job_id: str):
+            """Get the status of a multi-style processing job."""
+            multistyle = get_multistyle_processor()
+            job = multistyle.get_job(job_id)
+            if not job:
+                raise HTTPException(status_code=404, detail="Job not found")
+            return JSONResponse(job.to_dict())
+
+        @self.app.get("/api/multistyle/jobs")
+        async def list_multistyle_jobs():
+            """List all multi-style processing jobs."""
+            multistyle = get_multistyle_processor()
+            return JSONResponse({"jobs": multistyle.get_all_jobs()})
+
+        @self.app.get("/api/multistyle/output/{job_id}/{filename}")
+        async def get_multistyle_output(job_id: str, filename: str):
+            """Serve a multi-style output video."""
+            multistyle = get_multistyle_processor()
+
+            # Security: validate inputs
+            if ".." in job_id or "/" in job_id or "\\" in job_id:
+                raise HTTPException(status_code=400, detail="Invalid job ID")
+            if ".." in filename or "/" in filename or "\\" in filename:
+                raise HTTPException(status_code=400, detail="Invalid filename")
+
+            output_path = multistyle.multistyle_dir / job_id / filename
+            if not output_path.exists():
+                raise HTTPException(status_code=404, detail="Output not found")
+
+            return FileResponse(
+                path=str(output_path),
+                media_type="video/mp4",
+                filename=filename,
+            )
 
     def _setup_static(self):
         """Set up static file serving."""

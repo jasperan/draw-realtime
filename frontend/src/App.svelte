@@ -1,6 +1,10 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import OutputGallery from './OutputGallery.svelte';
+  import MultiStyleTab from './MultiStyleTab.svelte';
+
+  // Tab state
+  let activeTab: 'processing' | 'multistyle' = 'processing';
 
   // State
   let settings: any = null;
@@ -52,26 +56,36 @@
     }
   }
 
+  let loadError = '';
+
   onMount(async () => {
-    // Load settings
-    const res = await fetch('/api/settings');
-    settings = await res.json();
-    selectedModel = settings.default_model;
-    selectedPreset = settings.default_preset;
-    // Set initial prompt from default preset
-    if (settings.presets && settings.presets[selectedPreset]) {
-      prompt = settings.presets[selectedPreset].prompt;
-    } else {
-      prompt = settings.default_prompt;
+    try {
+      // Load settings
+      const res = await fetch('/api/settings');
+      if (!res.ok) throw new Error(`Settings API returned ${res.status}`);
+      settings = await res.json();
+      selectedModel = settings.default_model;
+      selectedPreset = settings.default_preset;
+      // Set initial prompt from default preset
+      if (settings.presets && settings.presets[selectedPreset]) {
+        prompt = settings.presets[selectedPreset].prompt;
+      } else {
+        prompt = settings.default_prompt;
+      }
+
+      // Load server videos
+      const videosRes = await fetch('/api/videos');
+      if (videosRes.ok) {
+        const videosData = await videosRes.json();
+        serverVideos = videosData.videos || [];
+      }
+
+      // Load existing jobs
+      await refreshJobs();
+    } catch (e) {
+      console.error('Failed to initialize:', e);
+      loadError = e instanceof Error ? e.message : 'Failed to connect to server';
     }
-
-    // Load server videos
-    const videosRes = await fetch('/api/videos');
-    const videosData = await videosRes.json();
-    serverVideos = videosData.videos || [];
-
-    // Load existing jobs
-    await refreshJobs();
   });
 
   async function refreshJobs() {
@@ -308,6 +322,10 @@
       outputVideoEl.play();
     }
   }
+
+  onDestroy(() => {
+    stopPolling();
+  });
 </script>
 
 <main>
@@ -316,6 +334,25 @@
     <p class="subtitle">Transform videos with AI-powered diffusion</p>
   </header>
 
+  <!-- Tab Navigation -->
+  <div class="tab-nav">
+    <button class="tab-btn" class:active={activeTab === 'processing'} on:click={() => activeTab = 'processing'}>
+      Video Processing
+    </button>
+    <button class="tab-btn" class:active={activeTab === 'multistyle'} on:click={() => activeTab = 'multistyle'}>
+      Multi-Style Generator
+    </button>
+  </div>
+
+  {#if loadError}
+    <div class="error-banner">
+      Failed to connect to server: {loadError}. Make sure the backend is running on port 7860.
+    </div>
+  {/if}
+
+  {#if activeTab === 'multistyle'}
+    <MultiStyleTab />
+  {:else}
   <div class="container">
     <!-- Real-time Frame Comparison (during processing) -->
     {#if isProcessing && previewInputUrl && previewOutputUrl}
@@ -521,7 +558,7 @@
               </div>
               <div class="job-status">
                 {#if job.status === 'processing'}
-                  <span class="status processing">{job.progress.toFixed(0)}%</span>
+                  <span class="status processing">{(job.progress || 0).toFixed(0)}%</span>
                 {:else if job.status === 'completed'}
                   <span class="status completed">Done</span>
                 {:else if job.status === 'failed'}
@@ -542,6 +579,7 @@
     <!-- Output Library -->
     <OutputGallery />
   </div>
+  {/if}
 </main>
 
 <style>
@@ -575,6 +613,47 @@
   .subtitle {
     color: #888;
     margin: 8px 0 0 0;
+  }
+
+  .tab-nav {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 24px;
+    padding: 4px;
+    background: #16213e;
+    border-radius: 12px;
+    width: fit-content;
+  }
+
+  .tab-btn {
+    background: transparent;
+    border: none;
+    color: #888;
+    padding: 12px 24px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.95rem;
+    font-weight: 500;
+    transition: all 0.2s;
+  }
+
+  .tab-btn:hover {
+    color: #ccc;
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .tab-btn.active {
+    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+    color: white;
+  }
+
+  .error-banner {
+    background: #7f1d1d;
+    color: #fca5a5;
+    padding: 12px 20px;
+    border-radius: 8px;
+    margin-bottom: 16px;
+    font-size: 0.9rem;
   }
 
   .container {
@@ -623,10 +702,6 @@
     gap: 12px;
   }
 
-  .placeholder.processing {
-    color: #60a5fa;
-  }
-
   .progress-container {
     width: 80%;
     height: 8px;
@@ -639,62 +714,6 @@
     height: 100%;
     background: linear-gradient(90deg, #3b82f6, #8b5cf6);
     transition: width 0.3s ease;
-  }
-
-  .progress-percent {
-    font-size: 1.2rem;
-    font-weight: 600;
-  }
-
-  .preview-frame {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    position: absolute;
-    top: 0;
-    left: 0;
-    border-radius: 8px;
-  }
-
-  .progress-overlay {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    background: linear-gradient(transparent, rgba(0, 0, 0, 0.85));
-    padding: 20px;
-    border-radius: 0 0 8px 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .progress-stats {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.85rem;
-    color: #ddd;
-  }
-
-  .eta {
-    color: #60a5fa;
-    font-weight: 500;
-  }
-
-  .frame-label {
-    position: absolute;
-    bottom: 10px;
-    left: 10px;
-    background: rgba(0, 0, 0, 0.7);
-    padding: 4px 10px;
-    border-radius: 4px;
-    font-size: 0.8rem;
-    color: #60a5fa;
-  }
-
-  .placeholder.processing {
-    position: relative;
-    padding: 0;
   }
 
   .preset-grid {

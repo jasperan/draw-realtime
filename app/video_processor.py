@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import subprocess
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -223,7 +224,6 @@ class VideoProcessor:
             final_path = job.output_path.replace('.mp4', '_h264.mp4')
 
             # Use ffmpeg to re-encode
-            import subprocess
             result = subprocess.run([
                 'ffmpeg', '-y', '-i', temp_path,
                 '-c:v', 'libx264', '-preset', 'fast',

@@ -10,7 +10,7 @@ class ModelConfig(BaseModel):
     id: str
     use_lcm_lora: bool = False
     description: str = ""
-    pipeline_type: Literal["streamdiffusion", "streamdiffusion-quantized", "diffusers", "flux"] = "streamdiffusion"
+    pipeline_type: Literal["streamdiffusion", "streamdiffusion-quantized", "diffusers", "flux", "flux-quantized", "flux-4bit"] = "streamdiffusion"
     lora_id: str = ""  # Optional LoRA to load
     num_inference_steps: int = 1  # For diffusers/flux pipeline
     guidance_scale: Optional[float] = None  # Per-model guidance scale
@@ -19,6 +19,8 @@ class ModelConfig(BaseModel):
     # Quantization-specific fields
     base_model: str = ""  # For quantized models: the base model key
     quantized_path: str = ""  # Path to quantized weights
+    use_ternary_linear: bool = True  # Convert BitLinear → TernaryLinear for speed (uses more VRAM)
+    use_torch_compile: bool = False  # Use torch.compile for 1.2x speedup (slow first inference)
 
 
 # Available model presets
@@ -45,12 +47,12 @@ MODELS: Dict[str, ModelConfig] = {
     ),
     "flux2-klein": ModelConfig(
         id="black-forest-labs/FLUX.2-klein-4B",
-        description="FLUX.2 Klein 4B (high quality, in-context img2img)",
+        description="FLUX.2 Klein 4B (best quality, recommended)",
         pipeline_type="flux",
         num_inference_steps=4,
         guidance_scale=1.0,
-        width=1024,
-        height=1024,
+        width=512,
+        height=512,
     ),
     # 1.58-bit Quantized Models (BitNet-style PTQ)
     "sd-turbo-1.58bit": ModelConfig(
@@ -68,6 +70,28 @@ MODELS: Dict[str, ModelConfig] = {
         pipeline_type="streamdiffusion-quantized",
         base_model="sd15-lcm",
         quantized_path="models/quantized/sd15-lcm-1.58bit",
+    ),
+    # FLUX Quantized Models
+    "flux-klein-1.58bit": ModelConfig(
+        id="black-forest-labs/FLUX.2-klein-4B",
+        description="FLUX.2 Klein 1.58-bit (faster, lower memory) [QUALITY ISSUES]",
+        pipeline_type="flux-quantized",
+        base_model="flux2-klein",
+        quantized_path="models/quantized/flux-klein-1.58bit",
+        num_inference_steps=4,
+        guidance_scale=1.0,
+        width=512,
+        height=512,
+    ),
+    # FLUX 4-bit Quantization (for lower VRAM GPUs)
+    "flux-klein-4bit": ModelConfig(
+        id="black-forest-labs/FLUX.2-klein-4B",
+        description="FLUX.2 Klein 4-bit NF4 (36% less VRAM, same quality)",
+        pipeline_type="flux-4bit",
+        num_inference_steps=4,
+        guidance_scale=1.0,
+        width=512,
+        height=512,
     ),
 }
 

@@ -176,8 +176,11 @@ CLAUDE.md
 # Serena MCP files
 .serena/
 
-# Design docs (local only)
+# Design docs and planning files (local only)
 docs/plans/
+task_plan.md
+findings.md
+progress.md
 
 # TensorRT engines (large, machine-specific)
 engines/
@@ -236,24 +239,14 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
-.playwright-mcp/preview_full.png
-.playwright-mcp/preview_test.png
-data/collector_checkpoint.json
-data/collector_status.json
-data/waze_africa.db
-data/waze_africa.db-shm
-data/waze_africa.db-wal
-data/waze_americas.db
-data/waze_americas.db-shm
-data/waze_americas.db-wal
-data/waze_asia.db
-data/waze_asia.db-shm
-data/waze_asia.db-wal
-data/waze_europe.db
-data/waze_europe.db-shm
-data/waze_europe.db-wal
-data/waze_oceania.db
-data/waze_oceania.db-shm
-data/waze_oceania.db-wal
-.playwright-mcp/preview_fixed.png
-.playwright-mcp/preview_100frames.png
+# Playwright MCP screenshots
+.playwright-mcp/
+
+# Thumbnails (generated)
+thumbnails/
+
+# Test scripts (development only)
+scripts/
+
+# Test pipelines
+test_pipelines/

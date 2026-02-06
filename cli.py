@@ -11,10 +11,17 @@ Usage:
     python cli.py --list-styles
     python cli.py --list-videos
     python cli.py --process-all -s oil-painting
+
+Multi-Style Mode (LLaVA + FLUX):
+    python cli.py multistyle input.mp4
+    python cli.py multistyle input.mp4 --description "a cat playing"
+    python cli.py multistyle input.mp4 --output-dir ./my-outputs
 """
 
 import argparse
 import os
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -33,6 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app.config import config, MODELS, DEFAULT_MODEL, DEFAULT_PROMPT, PROMPT_PRESETS, DEFAULT_PRESET
 from app.video_source import get_available_videos, get_video_path
+from app.multistyle import STYLES as MULTISTYLE_STYLES
 
 console = Console()
 
@@ -149,7 +157,8 @@ def process_video(
 
     # Create output video writer (temp file first)
     out_w, out_h = pipeline.get_output_resolution()
-    temp_path = output_path.replace('.mp4', '_temp.mp4')
+    base, ext = os.path.splitext(output_path)
+    temp_path = f"{base}_temp.mp4"
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(temp_path, fourcc, fps, (out_w, out_h))
 
@@ -194,7 +203,6 @@ def process_video(
     # Re-encode with ffmpeg for browser compatibility
     console.print("\n[bold green]Encoding to H.264...[/bold green]")
 
-    import subprocess
     result = subprocess.run([
         'ffmpeg', '-y', '-i', temp_path,
         '-c:v', 'libx264', '-preset', 'fast',
@@ -244,6 +252,159 @@ def process_all_videos(prompt: str = DEFAULT_PROMPT, model: str = DEFAULT_MODEL)
     console.print(f"\n[bold green]Completed: {success}/{len(videos)} videos[/bold green]")
 
 
+def process_multistyle(
+    input_path: str,
+    output_dir: Optional[str] = None,
+    description: Optional[str] = None,
+) -> bool:
+    """Process a video with multi-style FLUX generation."""
+    from app.multistyle import get_multistyle_processor, STYLES
+
+    # Validate input
+    if not os.path.exists(input_path):
+        # Check if it's a server video name
+        server_path = get_video_path(input_path)
+        if server_path:
+            input_path = server_path
+        else:
+            console.print(f"[red]Error: Video not found: {input_path}[/red]")
+            return False
+
+    # Get video info
+    cap = cv2.VideoCapture(input_path)
+    if not cap.isOpened():
+        console.print(f"[red]Error: Cannot open video: {input_path}[/red]")
+        return False
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    duration = total_frames / fps
+    cap.release()
+
+    console.print(f"\n[bold cyan]Multi-Style FLUX Generation[/bold cyan]")
+    console.print(f"  Input:    {input_path}")
+    console.print(f"  Duration: {duration:.1f}s ({total_frames} frames @ {fps:.1f} fps)")
+    console.print(f"  Styles:   {', '.join(s[0] for s in STYLES)}\n")
+
+    # Get processor
+    processor = get_multistyle_processor()
+
+    # Create job
+    job = processor.create_job(input_path)
+
+    if output_dir:
+        job.output_dir = output_dir
+        os.makedirs(output_dir, exist_ok=True)
+
+    console.print(f"  Output:   {job.output_dir}\n")
+
+    start_time = time.time()
+
+    # Phase 1: LLaVA analysis (or use provided description)
+    if description:
+        console.print(f"[bold green]Using provided description...[/bold green]")
+        job.description = description
+    else:
+        with console.status("[bold green]Analyzing video with LLaVA...") as status:
+            job.description = processor.analyze_video_with_llava(input_path)
+
+    console.print(f"[bold]Description:[/bold] {job.description}\n")
+
+    # Phase 2: Generate each style with FLUX
+    console.print("[bold green]Loading FLUX model...[/bold green]")
+    pipeline = get_pipeline()
+    pipeline.load_model("flux2-klein")
+
+    for i, (style_slug, style_desc) in enumerate(STYLES):
+        prompt = f"{job.description}, detailed, vibrant colors, {style_desc}"
+
+        console.print(f"\n[bold][{i + 1}/{len(STYLES)}] {style_slug}[/bold]")
+        console.print(f"  Prompt: {prompt[:80]}...")
+
+        pipeline.update_prompt(prompt)
+
+        # Process video for this style
+        input_name = Path(input_path).stem
+        output_filename = f"{input_name}_{style_slug}.mp4"
+        output_path = str(Path(job.output_dir) / output_filename)
+
+        # Open input video
+        cap = cv2.VideoCapture(input_path)
+        out_w, out_h = pipeline.get_output_resolution()
+        base_s, _ = os.path.splitext(output_path)
+        temp_path = f"{base_s}_temp.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(temp_path, fourcc, fps, (out_w, out_h))
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(complete_style="green", finished_style="bright_green"),
+            TaskProgressColumn(),
+            TextColumn("•"),
+            TimeRemainingColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task(f"Processing {style_slug}", total=total_frames)
+
+            frame_idx = 0
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                pil_image = Image.fromarray(frame_rgb)
+                output_image = pipeline.predict(pil_image)
+
+                if output_image is not None:
+                    output_array = np.array(output_image)
+                    output_bgr = cv2.cvtColor(output_array, cv2.COLOR_RGB2BGR)
+                    out.write(output_bgr)
+
+                frame_idx += 1
+                progress.update(task, advance=1)
+
+        cap.release()
+        out.release()
+
+        # Re-encode with H.264
+        import subprocess
+        result = subprocess.run([
+            'ffmpeg', '-y', '-i', temp_path,
+            '-c:v', 'libx264', '-preset', 'fast',
+            '-crf', '23', '-pix_fmt', 'yuv420p',
+            output_path
+        ], capture_output=True, text=True)
+
+        if result.returncode == 0:
+            os.remove(temp_path)
+        else:
+            os.rename(temp_path, output_path)
+
+        job.completed_outputs.append(output_path)
+        size_mb = os.path.getsize(output_path) / (1024 * 1024)
+        console.print(f"  [green]✓[/green] {output_filename} ({size_mb:.1f} MB)")
+
+    # Phase 3: Create comparison grid
+    console.print("\n[bold green]Creating comparison grid...[/bold green]")
+    grid_path = processor.create_comparison_grid(job)
+
+    if grid_path:
+        job.grid_output = grid_path
+        size_mb = os.path.getsize(grid_path) / (1024 * 1024)
+        console.print(f"  [green]✓[/green] {os.path.basename(grid_path)} ({size_mb:.1f} MB)")
+
+    elapsed = time.time() - start_time
+
+    console.print(f"\n[bold green]✓ Multi-Style Complete![/bold green]")
+    console.print(f"  Time:     {elapsed:.1f}s")
+    console.print(f"  Outputs:  {len(job.completed_outputs)} style videos + 1 grid")
+    console.print(f"  Location: {job.output_dir}\n")
+
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="StreamDiffusion Video-to-Video CLI",
@@ -257,9 +418,47 @@ Examples:
   %(prog)s --list-videos
   %(prog)s --list-models
   %(prog)s --process-all -s fantasy               # Process all with fantasy style
+
+Multi-Style Mode (LLaVA + FLUX):
+  %(prog)s multistyle input.mp4                   # Analyze with LLaVA, generate 5 styles
+  %(prog)s multistyle input.mp4 -d "a cat playing" # Skip LLaVA, use description
+  %(prog)s multistyle input.mp4 -o ./my-outputs   # Custom output directory
         """
     )
 
+    # Create subparsers for commands
+    subparsers = parser.add_subparsers(dest="command", help="Commands")
+
+    # Multistyle subcommand
+    multistyle_parser = subparsers.add_parser(
+        "multistyle",
+        help="Generate 5 artistic styles with LLaVA + FLUX",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Styles generated:
+  - Oil painting (rich textures, classic feel)
+  - Watercolor (soft, flowing, dreamlike)
+  - Impressionist (Monet-style brushstrokes)
+  - Pop art (bold colors, Warhol-esque)
+  - Ukiyo-e (Japanese woodblock print)
+
+Outputs 5 individual videos + 1 comparison grid video.
+        """
+    )
+    multistyle_parser.add_argument(
+        "input",
+        help="Input video file path or server video name"
+    )
+    multistyle_parser.add_argument(
+        "-o", "--output-dir",
+        help="Output directory (default: outputs/multistyle/<job-id>)"
+    )
+    multistyle_parser.add_argument(
+        "-d", "--description",
+        help="Skip LLaVA analysis and use this description instead"
+    )
+
+    # Main parser arguments (for non-subcommand usage)
     parser.add_argument(
         "input",
         nargs="?",
@@ -309,18 +508,48 @@ Examples:
 
     args = parser.parse_args()
 
-    # Handle info commands
-    if args.list_videos:
+    # Handle info commands first (no GPU/ffmpeg needed)
+    if hasattr(args, 'list_videos') and args.list_videos:
         list_videos()
         return
-
-    if args.list_models:
+    if hasattr(args, 'list_models') and args.list_models:
         list_models()
         return
-
-    if args.list_styles:
+    if hasattr(args, 'list_styles') and args.list_styles:
         list_styles()
         return
+
+    # Pre-flight checks for processing commands
+    needs_processing = (
+        args.command == "multistyle"
+        or getattr(args, 'process_all', False)
+        or getattr(args, 'input', None)
+    )
+
+    if needs_processing:
+        # Check ffmpeg
+        if not shutil.which('ffmpeg'):
+            console.print("[red]Error: ffmpeg not found. Install ffmpeg and ensure it's on your PATH.[/red]")
+            sys.exit(1)
+
+        # Check CUDA
+        try:
+            import torch
+            if not torch.cuda.is_available():
+                console.print("[red]Error: No CUDA GPU detected. This tool requires an NVIDIA GPU with CUDA support.[/red]")
+                sys.exit(1)
+        except ImportError:
+            console.print("[red]Error: PyTorch not installed. Run: pip install torch[/red]")
+            sys.exit(1)
+
+    # Handle multistyle subcommand
+    if args.command == "multistyle":
+        success = process_multistyle(
+            input_path=args.input,
+            output_dir=args.output_dir,
+            description=args.description,
+        )
+        sys.exit(0 if success else 1)
 
     # Determine prompt: custom prompt takes priority, otherwise use style preset
     if args.prompt:

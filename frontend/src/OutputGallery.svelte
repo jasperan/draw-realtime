@@ -113,7 +113,7 @@
     <div class="video-grid">
       {#each sortedOutputs as video}
         <div class="video-card">
-          <div class="thumbnail-container" on:click={() => selectedVideo = video}>
+          <div class="thumbnail-container" on:click={() => selectedVideo = video} on:keydown={(e) => e.key === 'Enter' && (selectedVideo = video)} role="button" tabindex="0">
             <img
               src={video.thumbnail}
               alt={video.filename}
@@ -159,8 +159,8 @@
 
 <!-- Video Player Modal -->
 {#if selectedVideo}
-  <div class="modal-overlay" on:click={() => selectedVideo = null}>
-    <div class="modal-content" on:click|stopPropagation>
+  <div class="modal-overlay" on:click={() => selectedVideo = null} on:keydown={(e) => e.key === 'Escape' && (selectedVideo = null)} role="dialog" tabindex="-1">
+    <div class="modal-content" on:click|stopPropagation on:keydown|stopPropagation>
       <div class="modal-header">
         <span class="modal-title">{selectedVideo.filename}</span>
         <button class="modal-close" on:click={() => selectedVideo = null}>×</button>
@@ -185,8 +185,8 @@
 
 <!-- Delete Confirmation Modal -->
 {#if deleteConfirm}
-  <div class="modal-overlay" on:click={() => deleteConfirm = null}>
-    <div class="confirm-modal" on:click|stopPropagation>
+  <div class="modal-overlay" on:click={() => deleteConfirm = null} on:keydown={(e) => e.key === 'Escape' && (deleteConfirm = null)} role="dialog" tabindex="-1">
+    <div class="confirm-modal" on:click|stopPropagation on:keydown|stopPropagation>
       <div class="confirm-title">Delete Video?</div>
       <div class="confirm-message">
         Are you sure you want to delete<br/>

@@ -116,6 +116,8 @@ def mock_pipeline():
     pipeline.get_available_models.return_value = {
         "sd-turbo": "SD-Turbo (fast, lower quality)",
         "sd15-lcm": "SD 1.5 + LCM-LoRA (slower, higher quality)",
+        "monarchrt-sf": "MonarchRT Self-Forcing (real-time 16fps, autoregressive)",
+        "monarchrt-wan": "MonarchRT Wan2.1 (high quality, bidirectional)",
     }
     pipeline.get_output_resolution.return_value = (512, 512)
     pipeline.predict.return_value = Image.fromarray(
@@ -123,7 +125,35 @@ def mock_pipeline():
     )
     pipeline.load_model.return_value = True
     pipeline.update_prompt.return_value = None
+    pipeline.current_pipeline_type = "streamdiffusion"
+    # MonarchRT support
+    pipeline.generate_video.return_value = [
+        Image.fromarray(np.zeros((480, 832, 3), dtype=np.uint8))
+        for _ in range(21)
+    ]
     return pipeline
+
+
+@pytest.fixture
+def mock_monarchrt_pipeline():
+    """A mock MonarchRTPipeline that does not require GPU or MonarchRT install."""
+    from unittest.mock import PropertyMock
+
+    monarchrt = MagicMock()
+    monarchrt.is_loaded = True
+    monarchrt.mode = "causal"
+    monarchrt.device = "cuda"
+    monarchrt.generate_video.return_value = [
+        Image.fromarray(np.random.randint(0, 255, (480, 832, 3), dtype=np.uint8))
+        for _ in range(21)
+    ]
+    monarchrt.load_causal_model.return_value = True
+    monarchrt.load_bidirectional_model.return_value = True
+    monarchrt.get_info.return_value = {
+        "loaded": True, "mode": "causal", "device": "cuda",
+        "monarchrt_available": True,
+    }
+    return monarchrt
 
 
 @pytest.fixture

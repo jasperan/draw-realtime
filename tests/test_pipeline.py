@@ -25,6 +25,7 @@ def _make_bare_pipeline():
     p.stream = None
     p.diffusers_pipe = None
     p.flux_pipe = None
+    p.monarchrt_pipe = None
     p.current_prompt = "test prompt"
     p.current_negative_prompt = "bad"
     return p

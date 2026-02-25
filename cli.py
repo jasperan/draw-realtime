@@ -12,6 +12,11 @@ Usage:
     python cli.py --list-videos
     python cli.py --process-all -s oil-painting
 
+MonarchRT Text-to-Video Generation:
+    python cli.py generate "a cat playing in a garden"
+    python cli.py generate "ocean waves at sunset" -m monarchrt-wan --frames 81
+    python cli.py generate "robot dancing" -o output.mp4 --seed 42
+
 Multi-Style Mode (LLaVA + FLUX):
     python cli.py multistyle input.mp4
     python cli.py multistyle input.mp4 --description "a cat playing"
@@ -252,6 +257,135 @@ def process_all_videos(prompt: str = DEFAULT_PROMPT, model: str = DEFAULT_MODEL)
     console.print(f"\n[bold green]Completed: {success}/{len(videos)} videos[/bold green]")
 
 
+def generate_video(
+    prompt: str,
+    output_path: Optional[str] = None,
+    model: str = "monarchrt-sf",
+    num_frames: int = 21,
+    seed: int = -1,
+) -> bool:
+    """Generate a video from text using MonarchRT."""
+    from app.monarchrt_pipeline import is_monarchrt_available
+
+    if not is_monarchrt_available():
+        console.print("[red]Error: MonarchRT is not installed.[/red]")
+        console.print("Install it with:")
+        console.print("  git clone https://github.com/Infini-AI-Lab/MonarchRT.git")
+        console.print("  cd MonarchRT && pip install -r requirements.txt")
+        console.print("  pip install flash-attn --no-build-isolation")
+        console.print("  python setup.py develop")
+        return False
+
+    if model not in MODELS:
+        console.print(f"[red]Error: Unknown model: {model}[/red]")
+        return False
+
+    model_config = MODELS[model]
+    if model_config.pipeline_type != "monarchrt":
+        console.print(f"[red]Error: Model '{model}' is not a MonarchRT model.[/red]")
+        console.print("Available MonarchRT models: monarchrt-sf, monarchrt-wan")
+        return False
+
+    # Generate output path if not provided
+    if output_path is None:
+        os.makedirs("outputs", exist_ok=True)
+        import uuid
+        gen_id = str(uuid.uuid4())[:8]
+        output_path = f"outputs/generated_{gen_id}.mp4"
+
+    out_w = model_config.width or 832
+    out_h = model_config.height or 480
+    fps = 16.0 if model_config.monarchrt_mode == "causal" else 24.0
+
+    console.print(f"\n[bold cyan]MonarchRT Video Generation[/bold cyan]")
+    console.print(f"  Model:    {model_config.description}")
+    console.print(f"  Prompt:   {prompt}")
+    console.print(f"  Frames:   {num_frames}")
+    console.print(f"  Size:     {out_w}x{out_h}")
+    console.print(f"  Output:   {output_path}\n")
+
+    # Load pipeline
+    with console.status("[bold green]Loading MonarchRT model...") as status:
+        pipeline = get_pipeline()
+        if model != pipeline.get_current_model():
+            status.update(f"[bold green]Switching to {model}...")
+            if not pipeline.load_model(model):
+                console.print("[red]Error: Failed to load MonarchRT model[/red]")
+                return False
+
+    start_time = time.time()
+
+    # Generate video
+    with console.status("[bold green]Generating video frames...") as status:
+        frames = pipeline.generate_video(
+            prompt=prompt,
+            num_frames=num_frames,
+            width=out_w,
+            height=out_h,
+            seed=seed,
+        )
+
+    if not frames:
+        console.print("[red]Error: Generation returned no frames[/red]")
+        return False
+
+    console.print(f"  Generated {len(frames)} frames")
+
+    # Write to video file
+    base, ext = os.path.splitext(output_path)
+    temp_path = f"{base}_temp.mp4"
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(temp_path, fourcc, fps, (out_w, out_h))
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(complete_style="green", finished_style="bright_green"),
+        TaskProgressColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Writing frames", total=len(frames))
+
+        for frame in frames:
+            output_array = np.array(frame)
+            output_bgr = cv2.cvtColor(output_array, cv2.COLOR_RGB2BGR)
+            h, w = output_bgr.shape[:2]
+            if w != out_w or h != out_h:
+                output_bgr = cv2.resize(output_bgr, (out_w, out_h))
+            out.write(output_bgr)
+            progress.update(task, advance=1)
+
+    out.release()
+
+    # Re-encode with ffmpeg for browser compatibility
+    console.print("\n[bold green]Encoding to H.264...[/bold green]")
+
+    result = subprocess.run([
+        'ffmpeg', '-y', '-i', temp_path,
+        '-c:v', 'libx264', '-preset', 'fast',
+        '-crf', '23', '-pix_fmt', 'yuv420p',
+        output_path
+    ], capture_output=True, text=True)
+
+    if result.returncode == 0:
+        os.remove(temp_path)
+    else:
+        console.print("[yellow]Warning: ffmpeg encoding failed, using raw output[/yellow]")
+        os.rename(temp_path, output_path)
+
+    elapsed = time.time() - start_time
+    fps_actual = len(frames) / elapsed
+
+    console.print(f"\n[bold green]Complete![/bold green]")
+    console.print(f"  Time:     {elapsed:.1f}s ({fps_actual:.1f} fps)")
+    console.print(f"  Output:   {output_path}")
+
+    size_mb = os.path.getsize(output_path) / (1024 * 1024)
+    console.print(f"  Size:     {size_mb:.1f} MB\n")
+
+    return True
+
+
 def process_multistyle(
     input_path: str,
     output_dir: Optional[str] = None,
@@ -429,6 +563,49 @@ Multi-Style Mode (LLaVA + FLUX):
     # Create subparsers for commands
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
+    # Generate subcommand (MonarchRT text-to-video)
+    generate_parser = subparsers.add_parser(
+        "generate",
+        help="Generate video from text using MonarchRT",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+MonarchRT models:
+  monarchrt-sf    Self-Forcing (real-time 16fps, autoregressive)
+  monarchrt-wan   Wan2.1 (high quality, bidirectional)
+
+Examples:
+  %(prog)s "a cat playing in a garden"
+  %(prog)s "ocean waves at sunset" -m monarchrt-wan --frames 81
+  %(prog)s "robot dancing" -o output.mp4 --seed 42
+        """
+    )
+    generate_parser.add_argument(
+        "prompt",
+        help="Text description of the video to generate"
+    )
+    generate_parser.add_argument(
+        "-o", "--output",
+        help="Output video file path (default: outputs/generated_<id>.mp4)"
+    )
+    generate_parser.add_argument(
+        "-m", "--model",
+        choices=["monarchrt-sf", "monarchrt-wan"],
+        default="monarchrt-sf",
+        help="MonarchRT model to use (default: monarchrt-sf)"
+    )
+    generate_parser.add_argument(
+        "--frames",
+        type=int,
+        default=21,
+        help="Number of frames to generate (default: 21)"
+    )
+    generate_parser.add_argument(
+        "--seed",
+        type=int,
+        default=-1,
+        help="Random seed (-1 for random)"
+    )
+
     # Multistyle subcommand
     multistyle_parser = subparsers.add_parser(
         "multistyle",
@@ -541,6 +718,17 @@ Outputs 5 individual videos + 1 comparison grid video.
         except ImportError:
             console.print("[red]Error: PyTorch not installed. Run: pip install torch[/red]")
             sys.exit(1)
+
+    # Handle generate subcommand (MonarchRT)
+    if args.command == "generate":
+        success = generate_video(
+            prompt=args.prompt,
+            output_path=args.output,
+            model=args.model,
+            num_frames=args.frames,
+            seed=args.seed,
+        )
+        sys.exit(0 if success else 1)
 
     # Handle multistyle subcommand
     if args.command == "multistyle":

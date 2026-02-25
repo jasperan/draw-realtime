@@ -12,6 +12,13 @@
   let selectedPreset = '';
   let prompt = '';
 
+  // MonarchRT generate mode
+  let numFrames = 21;
+
+  // Check if current model is a MonarchRT text-to-video model
+  $: isMonarchRT = settings?.models?.[selectedModel]?.includes?.('MonarchRT') || false;
+  $: isGenerateMode = selectedModel.startsWith('monarchrt-');
+
   // Video sources
   let serverVideos: any[] = [];
   let selectedServerVideo = '';
@@ -136,6 +143,11 @@
   }
 
   async function startProcessing() {
+    // MonarchRT generate mode: no input video required
+    if (isGenerateMode) {
+      return startGenerating();
+    }
+
     if (!inputVideoUrl) {
       alert('Please select or upload a video first');
       return;
@@ -174,6 +186,45 @@
     } catch (e) {
       console.error('Processing error:', e);
       alert('Failed to start processing');
+      isProcessing = false;
+    }
+  }
+
+  async function startGenerating() {
+    if (!prompt.trim()) {
+      alert('Please enter a text prompt for video generation');
+      return;
+    }
+
+    isProcessing = true;
+    currentJob = null;
+    outputVideoUrl = '';
+    inputVideoUrl = '';
+    lastPreviewFrame = -1;
+
+    const formData = new FormData();
+    formData.append('prompt', prompt);
+    formData.append('model', selectedModel);
+    formData.append('num_frames', numFrames.toString());
+
+    try {
+      const res = await fetch('/api/generate', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        alert(`Generation failed: ${error.detail}`);
+        isProcessing = false;
+        return;
+      }
+
+      currentJob = await res.json();
+      startPolling();
+    } catch (e) {
+      console.error('Generation error:', e);
+      alert('Failed to start generation');
       isProcessing = false;
     }
   }
@@ -384,54 +435,91 @@
       </div>
     {/if}
 
-    <!-- Video Comparison -->
-    <div class="video-grid">
-      <div class="video-box">
-        <h3>Input Video</h3>
-        {#if inputVideoUrl}
-          <video
-            bind:this={inputVideoEl}
-            src={inputVideoUrl}
-            controls
-            loop
-            on:play={handleInputPlay}
-            on:pause={handleInputPause}
-            on:seeked={handleInputSeek}
-          ></video>
-        {:else}
-          <div class="placeholder">
-            <span>Select or upload a video to begin</span>
-          </div>
-        {/if}
-      </div>
-
-      <div class="video-box">
-        <h3>Output Video</h3>
-        {#if outputVideoUrl}
-          <video
-            bind:this={outputVideoEl}
-            src={outputVideoUrl}
-            controls
-            loop
-            on:play={handleOutputPlay}
-            on:pause={handleOutputPause}
-            on:seeked={handleOutputSeek}
-          ></video>
-        {:else if isProcessing}
-          <div class="placeholder processing-placeholder">
-            <div class="processing-indicator">
-              <div class="spinner"></div>
-              <span>Processing in progress...</span>
-              <span class="processing-detail">See real-time preview above</span>
+    <!-- Video Comparison / Output -->
+    {#if isGenerateMode}
+      <!-- MonarchRT: Single output view -->
+      <div class="video-grid single">
+        <div class="video-box wide">
+          <h3>Generated Video</h3>
+          {#if outputVideoUrl}
+            <video
+              bind:this={outputVideoEl}
+              src={outputVideoUrl}
+              controls
+              loop
+            ></video>
+          {:else if isProcessing}
+            <div class="placeholder processing-placeholder">
+              <div class="processing-indicator">
+                <div class="spinner"></div>
+                <span>Generating video with MonarchRT...</span>
+                {#if currentJob}
+                  <span class="processing-detail">{(currentJob.progress || 0).toFixed(1)}% complete</span>
+                {/if}
+              </div>
+              {#if currentJob}
+                <div class="progress-container">
+                  <div class="progress-bar" style="width: {currentJob.progress || 0}%"></div>
+                </div>
+              {/if}
             </div>
-          </div>
-        {:else}
-          <div class="placeholder">
-            <span>Output will appear here after processing</span>
-          </div>
-        {/if}
+          {:else}
+            <div class="placeholder">
+              <span>Enter a prompt and click "Generate Video" to create a video with MonarchRT</span>
+            </div>
+          {/if}
+        </div>
       </div>
-    </div>
+    {:else}
+      <!-- Standard: Side-by-side comparison -->
+      <div class="video-grid">
+        <div class="video-box">
+          <h3>Input Video</h3>
+          {#if inputVideoUrl}
+            <video
+              bind:this={inputVideoEl}
+              src={inputVideoUrl}
+              controls
+              loop
+              on:play={handleInputPlay}
+              on:pause={handleInputPause}
+              on:seeked={handleInputSeek}
+            ></video>
+          {:else}
+            <div class="placeholder">
+              <span>Select or upload a video to begin</span>
+            </div>
+          {/if}
+        </div>
+
+        <div class="video-box">
+          <h3>Output Video</h3>
+          {#if outputVideoUrl}
+            <video
+              bind:this={outputVideoEl}
+              src={outputVideoUrl}
+              controls
+              loop
+              on:play={handleOutputPlay}
+              on:pause={handleOutputPause}
+              on:seeked={handleOutputSeek}
+            ></video>
+          {:else if isProcessing}
+            <div class="placeholder processing-placeholder">
+              <div class="processing-indicator">
+                <div class="spinner"></div>
+                <span>Processing in progress...</span>
+                <span class="processing-detail">See real-time preview above</span>
+              </div>
+            </div>
+          {:else}
+            <div class="placeholder">
+              <span>Output will appear here after processing</span>
+            </div>
+          {/if}
+        </div>
+      </div>
+    {/if}
 
     <!-- Playback Controls -->
     {#if inputVideoUrl && outputVideoUrl}
@@ -448,38 +536,47 @@
 
     <!-- Controls Panel -->
     <div class="controls">
-      <div class="control-row">
-        <!-- Source Selection -->
-        <div class="control-group source-group">
-          <label>Video Source</label>
-          <div class="source-options">
-            <label class="file-button">
-              Upload MP4
-              <input type="file" accept="video/*" on:change={handleFileUpload} />
-            </label>
+      {#if isGenerateMode}
+        <!-- MonarchRT Generate Mode Banner -->
+        <div class="mode-banner generate-mode">
+          MonarchRT Text-to-Video &mdash; Generate video from a text prompt (no input video needed)
+        </div>
+      {/if}
 
-            {#if serverVideos.length > 0}
-              <select
-                value={selectedServerVideo}
-                on:change={(e) => {
-                  const video = serverVideos.find(v => v.name === e.currentTarget.value);
-                  if (video) selectServerVideo(video);
-                }}
-              >
-                <option value="" disabled>Select Server Video</option>
-                {#each serverVideos as video}
-                  <option value={video.name}>{video.name} ({video.duration}s)</option>
-                {/each}
-              </select>
+      <div class="control-row">
+        <!-- Source Selection (hidden in generate mode) -->
+        {#if !isGenerateMode}
+          <div class="control-group source-group">
+            <label>Video Source</label>
+            <div class="source-options">
+              <label class="file-button">
+                Upload MP4
+                <input type="file" accept="video/*" on:change={handleFileUpload} />
+              </label>
+
+              {#if serverVideos.length > 0}
+                <select
+                  value={selectedServerVideo}
+                  on:change={(e) => {
+                    const video = serverVideos.find(v => v.name === e.currentTarget.value);
+                    if (video) selectServerVideo(video);
+                  }}
+                >
+                  <option value="" disabled>Select Server Video</option>
+                  {#each serverVideos as video}
+                    <option value={video.name}>{video.name} ({video.duration}s)</option>
+                  {/each}
+                </select>
+              {/if}
+            </div>
+
+            {#if uploadedFile}
+              <span class="selected-file">Uploaded: {uploadedFile.original_name}</span>
+            {:else if selectedServerVideo}
+              <span class="selected-file">Selected: {selectedServerVideo}</span>
             {/if}
           </div>
-
-          {#if uploadedFile}
-            <span class="selected-file">Uploaded: {uploadedFile.original_name}</span>
-          {:else if selectedServerVideo}
-            <span class="selected-file">Selected: {selectedServerVideo}</span>
-          {/if}
-        </div>
+        {/if}
 
         <!-- Model Selection -->
         <div class="control-group">
@@ -492,46 +589,64 @@
             </select>
           {/if}
         </div>
+
+        <!-- Frame Count (MonarchRT generate mode) -->
+        {#if isGenerateMode}
+          <div class="control-group">
+            <label>Frames</label>
+            <select bind:value={numFrames}>
+              <option value={21}>21 frames (~1.3s)</option>
+              <option value={41}>41 frames (~2.6s)</option>
+              <option value={61}>61 frames (~3.8s)</option>
+              <option value={81}>81 frames (~5s)</option>
+            </select>
+          </div>
+        {/if}
       </div>
 
-      <!-- Style Preset -->
-      <div class="control-group">
-        <label>Style Preset</label>
-        <div class="preset-grid">
-          {#if settings?.presets}
-            {#each Object.entries(settings.presets) as [key, preset]}
-              <button
-                class="preset-btn"
-                class:active={selectedPreset === key}
-                on:click={() => selectPreset(key)}
-              >
-                {preset.description}
-              </button>
-            {/each}
-          {/if}
+      <!-- Style Preset (for video-to-video mode) -->
+      {#if !isGenerateMode}
+        <div class="control-group">
+          <label>Style Preset</label>
+          <div class="preset-grid">
+            {#if settings?.presets}
+              {#each Object.entries(settings.presets) as [key, preset]}
+                <button
+                  class="preset-btn"
+                  class:active={selectedPreset === key}
+                  on:click={() => selectPreset(key)}
+                >
+                  {preset.description}
+                </button>
+              {/each}
+            {/if}
+          </div>
         </div>
-      </div>
+      {/if}
 
       <!-- Prompt -->
       <div class="control-group">
-        <label>Prompt (editable)</label>
+        <label>{isGenerateMode ? 'Video Description' : 'Prompt (editable)'}</label>
         <input
           type="text"
           bind:value={prompt}
-          placeholder="Enter prompt for transformation..."
+          placeholder={isGenerateMode
+            ? 'Describe the video you want to generate...'
+            : 'Enter prompt for transformation...'}
         />
       </div>
 
-      <!-- Process Button -->
+      <!-- Process / Generate Button -->
       <button
         class="process-btn"
+        class:generate-btn={isGenerateMode}
         on:click={startProcessing}
-        disabled={isProcessing || !inputVideoUrl}
+        disabled={isProcessing || (!isGenerateMode && !inputVideoUrl)}
       >
         {#if isProcessing}
-          Processing...
+          {isGenerateMode ? 'Generating...' : 'Processing...'}
         {:else}
-          Process Video
+          {isGenerateMode ? 'Generate Video' : 'Process Video'}
         {/if}
       </button>
     </div>
@@ -1096,6 +1211,52 @@
   .delete-btn:hover {
     color: #f87171;
     background: transparent;
+  }
+
+  /* MonarchRT Generate Mode */
+  .mode-banner {
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 500;
+  }
+
+  .generate-mode {
+    background: linear-gradient(135deg, #065f46, #064e3b);
+    color: #6ee7b7;
+    border: 1px solid #059669;
+  }
+
+  .generate-btn {
+    background: linear-gradient(135deg, #059669, #047857) !important;
+  }
+
+  .generate-btn:hover:not(:disabled) {
+    background: linear-gradient(135deg, #047857, #065f46) !important;
+  }
+
+  .video-grid.single {
+    grid-template-columns: 1fr;
+    max-width: 800px;
+    margin: 0 auto;
+  }
+
+  .video-box.wide {
+    background: #16213e;
+    border-radius: 12px;
+    padding: 16px;
+  }
+
+  .video-box.wide video {
+    width: 100%;
+    aspect-ratio: 16/9;
+    object-fit: contain;
+    border-radius: 8px;
+    background: #0f0f1a;
+  }
+
+  .video-box.wide .placeholder {
+    aspect-ratio: 16/9;
   }
 
   @media (max-width: 900px) {

@@ -27,6 +27,7 @@ from app.pipeline import get_pipeline
 from app.video_source import get_available_videos, get_video_path, VideoSource
 from app.video_processor import get_processor, JobStatus
 from app.multistyle import get_multistyle_processor, STYLES as MULTISTYLE_STYLES
+from app.monarchrt_pipeline import is_monarchrt_available
 
 # Fix mime type on Windows
 mimetypes.add_type("application/javascript", ".js")
@@ -44,6 +45,14 @@ class ProcessRequest(BaseModel):
     model: str = Field(default=DEFAULT_MODEL, description="Model to use")
 
 
+class GenerateRequest(BaseModel):
+    """Request to generate a video from text (MonarchRT)."""
+    prompt: str = Field(description="Text description of the video to generate")
+    model: str = Field(default="monarchrt-sf", description="MonarchRT model to use")
+    num_frames: int = Field(default=21, description="Number of frames to generate")
+    seed: int = Field(default=-1, description="Random seed (-1 for random)")
+
+
 class SettingsResponse(BaseModel):
     """API settings response."""
     models: dict
@@ -53,6 +62,7 @@ class SettingsResponse(BaseModel):
     default_preset: str
     width: int
     height: int
+    monarchrt_available: bool = False
 
 
 class App:
@@ -94,6 +104,7 @@ class App:
                 default_preset=DEFAULT_PRESET,
                 width=config.width,
                 height=config.height,
+                monarchrt_available=is_monarchrt_available(),
             )
 
         @self.app.get("/api/videos")
@@ -197,6 +208,53 @@ class App:
 
             # Start processing in background
             background_tasks.add_task(processor.process_job, job.job_id, pipeline)
+
+            return JSONResponse(job.to_dict())
+
+        @self.app.post("/api/generate")
+        async def generate_video(
+            background_tasks: BackgroundTasks,
+            prompt: str = Form(...),
+            model: str = Form("monarchrt-sf"),
+            num_frames: int = Form(21),
+            seed: int = Form(-1),
+        ):
+            """Generate a video from text using MonarchRT.
+
+            This endpoint creates videos from text prompts without requiring
+            an input video. Only works with MonarchRT models.
+            """
+            processor = get_processor()
+            pipeline = get_pipeline()
+
+            # Validate model is MonarchRT
+            if model not in MODELS:
+                raise HTTPException(status_code=400, detail=f"Unknown model: {model}")
+
+            model_config = MODELS[model]
+            if model_config.pipeline_type != "monarchrt":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Model '{model}' is not a MonarchRT model. Use /api/process for video-to-video.",
+                )
+
+            if not is_monarchrt_available():
+                raise HTTPException(
+                    status_code=503,
+                    detail="MonarchRT is not installed. See MonarchRT/README.md for setup.",
+                )
+
+            # Create generation job (no input video)
+            fps = 16.0 if model_config.monarchrt_mode == "causal" else 24.0
+            job = processor.create_generate_job(
+                prompt=prompt,
+                model=model,
+                num_frames=num_frames,
+                fps=fps,
+            )
+
+            # Start generation in background
+            background_tasks.add_task(processor.process_generate_job, job.job_id, pipeline)
 
             return JSONResponse(job.to_dict())
 

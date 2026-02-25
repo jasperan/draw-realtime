@@ -117,6 +117,150 @@ class VideoProcessor:
         self.jobs[job_id] = job
         return job
 
+    def create_generate_job(
+        self,
+        prompt: str,
+        model: str,
+        num_frames: int = 21,
+        fps: float = 16.0,
+    ) -> ProcessingJob:
+        """Create a text-to-video generation job (MonarchRT).
+
+        Unlike create_job(), this does not require an input video.
+        """
+        job_id = str(uuid.uuid4())[:8]
+
+        output_filename = f"generated_{job_id}_output.mp4"
+        output_path = str(self.outputs_dir / output_filename)
+
+        job = ProcessingJob(
+            job_id=job_id,
+            input_path="",  # No input for text-to-video
+            output_path=output_path,
+            prompt=prompt,
+            model=model,
+            total_frames=num_frames,
+            fps=fps,
+        )
+
+        self.jobs[job_id] = job
+        return job
+
+    async def process_generate_job(self, job_id: str, pipeline) -> bool:
+        """Process a MonarchRT text-to-video generation job."""
+        job = self.jobs.get(job_id)
+        if not job:
+            return False
+
+        job.status = JobStatus.PROCESSING
+        job.started_at = time.time()
+
+        try:
+            # Check/update model
+            if job.model != pipeline.get_current_model():
+                pipeline.load_model(job.model)
+
+            # Update prompt
+            pipeline.update_prompt(job.prompt)
+
+            from app.config import MODELS
+            model_config = MODELS.get(job.model)
+            num_frames = model_config.num_output_frames if model_config else job.total_frames
+            out_w = model_config.width if model_config and model_config.width else 832
+            out_h = model_config.height if model_config and model_config.height else 480
+
+            job.total_frames = num_frames
+            job.progress = 5.0  # Show initial progress
+
+            # Yield control before heavy computation
+            await asyncio.sleep(0)
+
+            # Generate video frames (this is a single batch operation)
+            frames = pipeline.generate_video(
+                prompt=job.prompt,
+                num_frames=num_frames,
+                width=out_w,
+                height=out_h,
+            )
+
+            if not frames:
+                raise ValueError("MonarchRT generation returned no frames")
+
+            job.progress = 70.0
+            await asyncio.sleep(0)
+
+            # Write frames to video file
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            out = cv2.VideoWriter(
+                job.output_path,
+                fourcc,
+                job.fps,
+                (out_w, out_h),
+            )
+
+            for i, frame in enumerate(frames):
+                output_array = np.array(frame)
+                output_bgr = cv2.cvtColor(output_array, cv2.COLOR_RGB2BGR)
+
+                # Resize if needed
+                h, w = output_bgr.shape[:2]
+                if w != out_w or h != out_h:
+                    output_bgr = cv2.resize(output_bgr, (out_w, out_h))
+
+                out.write(output_bgr)
+
+                job.current_frame = i + 1
+                job.progress = 70.0 + (i / len(frames)) * 20.0
+
+                # Save preview frame periodically
+                if i == 0 or i == len(frames) - 1 or i % max(1, len(frames) // 5) == 0:
+                    output_preview_path = str(self.preview_dir / f"{job_id}_output.jpg")
+                    output_temp = str(self.preview_dir / f"{job_id}_output_tmp.jpg")
+                    cv2.imwrite(output_temp, output_bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                    os.replace(output_temp, output_preview_path)
+                    job.preview_frame_path = f"{job_id}_output.jpg"
+
+            out.release()
+
+            job.progress = 90.0
+            await asyncio.sleep(0)
+
+            # Re-encode with ffmpeg for browser compatibility (H.264)
+            temp_path = job.output_path
+            final_path = job.output_path.replace('.mp4', '_h264.mp4')
+
+            result = subprocess.run([
+                'ffmpeg', '-y', '-i', temp_path,
+                '-c:v', 'libx264', '-preset', 'fast',
+                '-crf', '23', '-pix_fmt', 'yuv420p',
+                final_path
+            ], capture_output=True, text=True)
+
+            if result.returncode == 0:
+                os.remove(temp_path)
+                os.rename(final_path, temp_path)
+
+            job.status = JobStatus.COMPLETED
+            job.completed_at = time.time()
+            job.progress = 100.0
+            return True
+
+        except Exception as e:
+            job.status = JobStatus.FAILED
+            job.error = str(e)
+            job.completed_at = time.time()
+            print(f"MonarchRT generation error for job {job_id}: {e}")
+            import traceback
+            traceback.print_exc()
+
+            try:
+                if os.path.exists(job.output_path):
+                    os.remove(job.output_path)
+            except OSError:
+                pass
+
+            return False
+
     async def process_job(self, job_id: str, pipeline) -> bool:
         """Process a video job asynchronously."""
         job = self.jobs.get(job_id)

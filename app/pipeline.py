@@ -5,6 +5,7 @@ Supports:
 - Diffusers models (Hyper-SDXL)
 - FLUX models (FLUX.2 Klein)
 - 1.58-bit quantized models (BitNet-style PTQ)
+- MonarchRT models (real-time video generation via Monarch attention DiT)
 """
 
 import os
@@ -43,6 +44,7 @@ class Pipeline:
         self.stream: Optional[StreamDiffusionWrapper] = None  # For StreamDiffusion
         self.diffusers_pipe: Optional[Any] = None  # For Diffusers AutoPipeline
         self.flux_pipe: Optional[Any] = None  # For FLUX.2 Klein pipeline
+        self.monarchrt_pipe: Optional[Any] = None  # For MonarchRT pipeline
         self.current_prompt = DEFAULT_PROMPT
         self.current_negative_prompt = DEFAULT_NEGATIVE_PROMPT
 
@@ -71,13 +73,18 @@ class Pipeline:
             if model_config.pipeline_type in ("flux", "flux-quantized") and self.flux_pipe is not None:
                 print(f"Model {model_key} already loaded")
                 return True
+            if model_config.pipeline_type == "monarchrt" and self.monarchrt_pipe is not None:
+                print(f"Model {model_key} already loaded")
+                return True
 
         # Clean up existing models
         self._cleanup()
 
         print(f"Loading model: {model_config.description}")
 
-        if model_config.pipeline_type == "flux":
+        if model_config.pipeline_type == "monarchrt":
+            return self._load_monarchrt_model(model_key, model_config)
+        elif model_config.pipeline_type == "flux":
             return self._load_flux_model(model_key, model_config)
         elif model_config.pipeline_type == "flux-quantized":
             return self._load_flux_quantized_model(model_key, model_config)
@@ -125,9 +132,98 @@ class Pipeline:
             del self.flux_pipe
             self.flux_pipe = None
 
+        if self.monarchrt_pipe is not None:
+            try:
+                self.monarchrt_pipe.cleanup()
+            except Exception:
+                pass
+            del self.monarchrt_pipe
+            self.monarchrt_pipe = None
+
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+    def _load_monarchrt_model(self, model_key: str, model_config) -> bool:
+        """Load a MonarchRT model for real-time video generation."""
+        try:
+            from app.monarchrt_pipeline import MonarchRTPipeline, is_monarchrt_available
+
+            if not is_monarchrt_available():
+                print("MonarchRT is not installed. See MonarchRT/README.md for installation.")
+                return False
+
+            self.monarchrt_pipe = MonarchRTPipeline(device=self.device)
+
+            # Resolve relative paths
+            project_root = Path(__file__).parent.parent
+
+            if model_config.monarchrt_mode == "causal":
+                config_path = str(project_root / model_config.monarchrt_config)
+                checkpoint_path = str(project_root / model_config.monarchrt_checkpoint)
+                success = self.monarchrt_pipe.load_causal_model(
+                    config_path=config_path,
+                    checkpoint_path=checkpoint_path,
+                )
+            elif model_config.monarchrt_mode == "bidirectional":
+                checkpoint_dir = str(project_root / model_config.monarchrt_checkpoint) if model_config.monarchrt_checkpoint else ""
+                success = self.monarchrt_pipe.load_bidirectional_model(
+                    model_name=model_config.monarchrt_model_name,
+                    checkpoint_dir=checkpoint_dir,
+                )
+            else:
+                print(f"Unknown MonarchRT mode: {model_config.monarchrt_mode}")
+                return False
+
+            if success:
+                self.current_model_key = model_key
+                self.current_pipeline_type = "monarchrt"
+                print(f"MonarchRT model {model_key} loaded successfully")
+            else:
+                self.monarchrt_pipe = None
+
+            return success
+
+        except Exception as e:
+            print(f"Failed to load MonarchRT model {model_key}: {e}")
+            import traceback
+            traceback.print_exc()
+            self.monarchrt_pipe = None
+            return False
+
+    def generate_video(
+        self,
+        prompt: str,
+        num_frames: int = 21,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        seed: int = -1,
+    ) -> Optional[list]:
+        """Generate a complete video from a text prompt (MonarchRT only).
+
+        Returns:
+            List of PIL Images (one per frame), or None on failure.
+        """
+        if self.current_pipeline_type != "monarchrt" or self.monarchrt_pipe is None:
+            print("generate_video() requires a loaded MonarchRT model")
+            return None
+
+        model_config = MODELS.get(self.current_model_key)
+        out_w = width or (model_config.width if model_config else 832)
+        out_h = height or (model_config.height if model_config else 480)
+        steps = model_config.num_inference_steps if model_config else 4
+        guidance = model_config.guidance_scale if model_config and model_config.guidance_scale else 3.0
+
+        return self.monarchrt_pipe.generate_video(
+            prompt=prompt,
+            num_frames=num_frames,
+            width=out_w,
+            height=out_h,
+            seed=seed,
+            guidance_scale=guidance,
+            num_inference_steps=steps,
+            negative_prompt=self.current_negative_prompt,
+        )
 
     def _load_diffusers_model(self, model_key: str, model_config) -> bool:
         """Load a model using Diffusers AutoPipeline."""

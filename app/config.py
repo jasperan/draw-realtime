@@ -10,7 +10,10 @@ class ModelConfig(BaseModel):
     id: str
     use_lcm_lora: bool = False
     description: str = ""
-    pipeline_type: Literal["streamdiffusion", "streamdiffusion-quantized", "diffusers", "flux", "flux-quantized", "flux-4bit"] = "streamdiffusion"
+    pipeline_type: Literal[
+        "streamdiffusion", "streamdiffusion-quantized", "diffusers",
+        "flux", "flux-quantized", "flux-4bit", "monarchrt",
+    ] = "streamdiffusion"
     lora_id: str = ""  # Optional LoRA to load
     num_inference_steps: int = 1  # For diffusers/flux pipeline
     guidance_scale: Optional[float] = None  # Per-model guidance scale
@@ -21,6 +24,13 @@ class ModelConfig(BaseModel):
     quantized_path: str = ""  # Path to quantized weights
     use_ternary_linear: bool = True  # Convert BitLinear → TernaryLinear for speed (uses more VRAM)
     use_torch_compile: bool = False  # Use torch.compile for 1.2x speedup (slow first inference)
+    # MonarchRT-specific fields
+    monarchrt_mode: str = ""  # "causal" (Self-Forcing) or "bidirectional" (Wan2.1)
+    monarchrt_config: str = ""  # Path to MonarchRT YAML config
+    monarchrt_checkpoint: str = ""  # Path to MonarchRT checkpoint
+    monarchrt_model_name: str = ""  # Wan model name (for bidirectional)
+    num_output_frames: int = 21  # Default frame count for video generation
+    is_text_to_video: bool = False  # True for text-to-video models (no input video required)
 
 
 # Available model presets
@@ -92,6 +102,35 @@ MODELS: Dict[str, ModelConfig] = {
         guidance_scale=1.0,
         width=512,
         height=512,
+    ),
+    # MonarchRT Models (real-time video generation via Monarch attention DiT)
+    "monarchrt-sf": ModelConfig(
+        id="Infini-AI-Lab/MonarchRT",
+        description="MonarchRT Self-Forcing (real-time 16fps, autoregressive)",
+        pipeline_type="monarchrt",
+        monarchrt_mode="causal",
+        monarchrt_config="MonarchRT/configs/self_forcing_monarch_dmd.yaml",
+        monarchrt_checkpoint="MonarchRT/checkpoints/ode_init.pt",
+        num_inference_steps=4,
+        guidance_scale=3.0,
+        width=832,
+        height=480,
+        num_output_frames=21,
+        is_text_to_video=True,
+    ),
+    "monarchrt-wan": ModelConfig(
+        id="Infini-AI-Lab/MonarchRT",
+        description="MonarchRT Wan2.1 (high quality, bidirectional)",
+        pipeline_type="monarchrt",
+        monarchrt_mode="bidirectional",
+        monarchrt_model_name="Wan2.1-T2V-1.3B",
+        monarchrt_checkpoint="MonarchRT/checkpoints/Wan2.1-T2V-1.3B",
+        num_inference_steps=50,
+        guidance_scale=5.0,
+        width=832,
+        height=480,
+        num_output_frames=81,
+        is_text_to_video=True,
     ),
 }
 

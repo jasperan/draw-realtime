@@ -11,6 +11,7 @@ Real-time video-to-video AI diffusion with [StreamDiffusion](https://github.com/
 - **1.58-bit Quantization** - BitNet-style PTQ for faster inference and lower memory
 - **Real-time Preview** - Watch generation progress with live frame updates
 - **Multi-Style Generation** - Generate 5 artistic styles from a single video using LLaVA + FLUX
+- **Text-to-Video Generation** - Generate videos from text prompts using MonarchRT / Wan2.1
 
 ### Input Options
 - Upload MP4 from browser
@@ -82,8 +83,58 @@ cd frontend && npm install && npm run build && cd ..
 | **SD 1.5 + LCM 1.58-bit** | ~45+ | Higher | 3-4 GB | Quantized, lower memory |
 | **Hyper-SDXL** | ~20 | SDXL | 8 GB | 1-step SDXL quality |
 | **FLUX.2 Klein** | ~8 | Highest | 10 GB | 4B parameter, best quality |
+| **MonarchRT Self-Forcing** | 16* | Good | 8+ GB | Real-time autoregressive text-to-video |
+| **MonarchRT Wan2.1** | 0.3* | High | 8+ GB | Bidirectional text-to-video, 1.3B params |
 
-*FPS measured on RTX 4090
+*FPS measured on RTX 4090 (Self-Forcing) / A10 (Wan2.1)
+
+## Text-to-Video Generation (MonarchRT)
+
+Generate videos from text prompts using [MonarchRT](https://github.com/Infini-AI-Lab/MonarchRT) with Wan2.1 models. MonarchRT uses Monarch matrix attention for efficient Diffusion Transformers.
+
+**Sample output** (Wan2.1-T2V-1.3B, 21 frames, 832x480, 30 steps on A10):
+
+> Prompt: *"A golden retriever running through a sunlit meadow with wildflowers, cinematic, beautiful lighting"*
+
+![MonarchRT sample frame](docs/samples/monarchrt_sample_frame.png)
+
+[View full video](docs/samples/monarchrt_sample.mp4)
+
+### MonarchRT Usage
+
+**Web UI:** Select "MonarchRT Wan2.1" from the model dropdown. The UI switches to text-to-video mode automatically.
+
+**CLI:**
+```bash
+# Generate with default settings (21 frames, 832x480)
+python cli.py generate "a cat sitting in a garden, cinematic"
+
+# Specify model and frame count
+python cli.py generate "ocean waves crashing on rocks" -m monarchrt-wan --frames 81
+
+# Custom output path and seed
+python cli.py generate "a futuristic city at night" -o output.mp4 --seed 42
+```
+
+**API:**
+```bash
+curl -X POST http://localhost:7860/api/generate \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "a cat in a garden", "model": "monarchrt-wan", "num_frames": 21}'
+```
+
+### MonarchRT Installation
+
+```bash
+# Clone MonarchRT into the project
+git clone https://github.com/Infini-AI-Lab/MonarchRT.git
+cd MonarchRT && pip install -r requirements.txt && python setup.py develop && cd ..
+
+# Download Wan2.1-T2V-1.3B model
+huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B --local-dir MonarchRT/wan_models/Wan2.1-T2V-1.3B
+```
+
+Requires PyTorch >= 2.8.0, flash-attn, and CUDA GPU with 8+ GB VRAM.
 
 ## 1.58-bit Quantization
 
@@ -232,6 +283,7 @@ This:
 | `/api/jobs` | GET | List all jobs |
 | `/api/output/{file}` | GET | Download processed video |
 | `/api/preview/{file}` | GET | Get real-time preview frame |
+| `/api/generate` | POST | Start text-to-video generation (MonarchRT) |
 | `/api/multistyle/process` | POST | Start multi-style generation |
 | `/api/multistyle/job/{id}` | GET | Get multi-style job status |
 
@@ -244,6 +296,7 @@ draw-realtime/
 │   ├── pipeline.py          # Model wrapper with switching
 │   ├── config.py            # Models, presets, configuration
 │   ├── video_processor.py   # Batch video processing
+│   ├── monarchrt_pipeline.py # MonarchRT text-to-video wrapper
 │   ├── multistyle.py        # LLaVA + FLUX multi-style
 │   └── quantization/        # 1.58-bit PTQ module
 │       ├── bitlinear.py     # BitLinear layer implementation
@@ -261,6 +314,7 @@ draw-realtime/
 ├── uploads/                  # User uploads
 ├── outputs/                  # Processed videos
 ├── engines/                  # TensorRT cached engines
+├── MonarchRT/                # MonarchRT text-to-video (optional)
 ├── StreamDiffusion/          # StreamDiffusion library
 ├── cli.py                    # Command-line interface
 ├── requirements.txt
@@ -338,6 +392,8 @@ python scripts/quantize_model.py --model sd-turbo
 - [LCM-LoRA](https://huggingface.co/latent-consistency/lcm-lora-sdv1-5) - Latent consistency LoRA
 - [TensorRT](https://developer.nvidia.com/tensorrt) - NVIDIA inference optimization
 - [BitNet](https://arxiv.org/abs/2310.11453) - 1.58-bit quantization inspiration
+- [MonarchRT](https://github.com/Infini-AI-Lab/MonarchRT) - Real-time video generation with Monarch attention
+- [Wan2.1](https://github.com/Wan-Video/Wan2.1) - Text-to-video diffusion model
 - [FastAPI](https://fastapi.tiangolo.com/) - Python web framework
 - [Svelte](https://svelte.dev/) - Frontend framework
 
@@ -347,6 +403,7 @@ python scripts/quantize_model.py --model sd-turbo
 - [BitNet: 1-bit LLMs](https://arxiv.org/abs/2310.11453)
 - [The Era of 1-bit LLMs](https://arxiv.org/abs/2402.17764) - 1.58-bit quantization
 - [FLUX 1.58-bit](https://huggingface.co/black-forest-labs/flux1-schnell-1.58bit) - Reference implementation
+- [MonarchRT: Real-Time Video Generation](https://arxiv.org/abs/2602.12271) - Monarch matrix attention for DiTs
 
 ## License
 

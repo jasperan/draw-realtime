@@ -239,7 +239,8 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
-# Playwright MCP screenshots
+# Dogfood / QA output
+dogfood-output/
 .playwright-mcp/
 
 # Thumbnails (generated)

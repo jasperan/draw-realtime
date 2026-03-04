@@ -416,3 +416,48 @@ MIT License - See [LICENSE](LICENSE) for details.
 - [Black Forest Labs](https://blackforestlabs.ai/) for FLUX
 - [Microsoft Research](https://github.com/microsoft/BitNet) for BitNet
 - The Hugging Face community
+
+---
+
+## 🎨 Frontend Design
+
+### UI Screenshots
+
+The draw-realtime frontend features a **Creative Studio** aesthetic with warm amber and orange gradients, designed to evoke professional video editing software.
+
+#### Dashboard Overview
+![Dashboard](assets/screenshots/dashboard.png)
+*Main interface showing video upload, model selection, and processing controls*
+
+#### Video Processing
+![Processing](assets/screenshots/processing.png)
+*Real-time video processing with live preview and progress tracking*
+
+#### Multi-Style Generation
+![Multi-Style](assets/screenshots/multistyle.png)
+*Generate 5 artistic styles simultaneously using LLaVA + FLUX*
+
+#### Side-by-Side Comparison
+![Comparison](assets/screenshots/comparison.png)
+*Synchronized playback of input and output videos*
+
+### Design System
+
+| Component | Description |
+|-----------|-------------|
+| **Color Palette** | Warm amber (#F59E0B), orange gradients, dark studio background |
+| **Typography** | Modern sans-serif with monospace accents for technical data |
+| **Layout** | Centered workspace with floating control panels |
+| **Animations** | Smooth transitions, pulse effects during processing |
+| **Icons** | Custom SVG icons matching the creative tool theme |
+
+### Key UI Components
+
+1. **Studio Container** - Glass-morphism panels with backdrop blur
+2. **Video Players** - Dual synchronized players with playback controls
+3. **Progress Tracking** - Real-time frame counters and ETA displays
+4. **Model Selector** - Visual cards for different AI models
+5. **Preset Grid** - Quick-select style presets with hover animations
+6. **Job History** - Timeline of recent processing jobs
+
+> **Note**: Screenshots are stored in `assets/screenshots/`. Run the application and use your browser's dev tools to capture updated screenshots as needed.

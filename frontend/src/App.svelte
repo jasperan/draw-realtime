@@ -45,7 +45,7 @@
   let previewInputUrl = '';
   let previewOutputUrl = '';
   let previewTimestamp = 0;
-  let lastPreviewFrame = -1;  // Track last frame to avoid unnecessary updates
+  let lastPreviewFrame = -1;
 
   // Format seconds to MM:SS
   function formatTime(seconds: number): string {
@@ -73,7 +73,6 @@
       settings = await res.json();
       selectedModel = settings.default_model;
       selectedPreset = settings.default_preset;
-      // Set initial prompt from default preset
       if (settings.presets && settings.presets[selectedPreset]) {
         prompt = settings.presets[selectedPreset].prompt;
       } else {
@@ -126,7 +125,7 @@
       }
 
       uploadedFile = await res.json();
-      selectedServerVideo = ''; // Deselect server video
+      selectedServerVideo = '';
       inputVideoUrl = `/api/input/${uploadedFile.filename}`;
       outputVideoUrl = '';
     } catch (e) {
@@ -143,7 +142,6 @@
   }
 
   async function startProcessing() {
-    // MonarchRT generate mode: no input video required
     if (isGenerateMode) {
       return startGenerating();
     }
@@ -156,7 +154,7 @@
     isProcessing = true;
     currentJob = null;
     outputVideoUrl = '';
-    lastPreviewFrame = -1;  // Reset for new job
+    lastPreviewFrame = -1;
 
     const formData = new FormData();
     formData.append('prompt', prompt);
@@ -246,8 +244,6 @@
 
         currentJob = await res.json();
 
-        // Update real-time preview frames only when frame changes (every 100 frames on backend)
-        // This prevents NS_BINDING_ABORTED errors from rapid URL changes
         if (currentJob.status === 'processing' && currentJob.preview_frame && currentJob.input_frame) {
           const currentFrame = Math.floor(currentJob.current_frame / 100) * 100;
           if (currentFrame !== lastPreviewFrame) {
@@ -379,749 +375,1442 @@
   });
 </script>
 
-<main>
-  <header>
-    <h1>StreamDiffusion Video-to-Video</h1>
-    <p class="subtitle">Transform videos with AI-powered diffusion</p>
+<main class="studio-container">
+  <!-- Header -->
+  <header class="studio-header">
+    <div class="header-brand">
+      <div class="brand-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M8 14s1.5 2 4 2 4-2 4-2"/>
+          <line x1="9" y1="9" x2="9.01" y2="9"/>
+          <line x1="15" y1="9" x2="15.01" y2="9"/>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <h1>Draw Realtime</h1>
+        <span class="tagline">AI Video Studio</span>
+      </div>
+    </div>
+    <p class="header-description">
+      Transform videos with real-time AI-powered diffusion
+    </p>
   </header>
 
-  <!-- Tab Navigation -->
-  <div class="tab-nav">
-    <button class="tab-btn" class:active={activeTab === 'processing'} on:click={() => activeTab = 'processing'}>
-      Video Processing
+  <!-- Navigation Tabs -->
+  <nav class="tab-navigation" role="tablist">
+    <button 
+      class="tab-button" 
+      class:active={activeTab === 'processing'}
+      on:click={() => activeTab = 'processing'}
+      role="tab"
+      aria-selected={activeTab === 'processing'}
+    >
+      <span class="tab-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="5 3 19 12 5 21 5 3"/>
+        </svg>
+      </span>
+      <span class="tab-label">Video Processing</span>
     </button>
-    <button class="tab-btn" class:active={activeTab === 'multistyle'} on:click={() => activeTab = 'multistyle'}>
-      Multi-Style Generator
+    <button 
+      class="tab-button" 
+      class:active={activeTab === 'multistyle'}
+      on:click={() => activeTab = 'multistyle'}
+      role="tab"
+      aria-selected={activeTab === 'multistyle'}
+    >
+      <span class="tab-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="7" height="7"/>
+          <rect x="14" y="3" width="7" height="7"/>
+          <rect x="14" y="14" width="7" height="7"/>
+          <rect x="3" y="14" width="7" height="7"/>
+        </svg>
+      </span>
+      <span class="tab-label">Multi-Style</span>
     </button>
-  </div>
+  </nav>
 
   {#if loadError}
-    <div class="error-banner">
-      Failed to connect to server: {loadError}. Make sure the backend is running on port 7860.
+    <div class="error-toast" role="alert">
+      <span class="error-icon">!</span>
+      <span>Failed to connect to server: {loadError}</span>
     </div>
   {/if}
 
   {#if activeTab === 'multistyle'}
     <MultiStyleTab />
   {:else}
-  <div class="container">
-    <!-- Real-time Frame Comparison (during processing) -->
-    {#if isProcessing && previewInputUrl && previewOutputUrl}
-      <div class="realtime-comparison">
-        <h3>Real-time Processing Preview</h3>
-        <div class="comparison-grid">
-          <div class="comparison-frame">
-            <span class="frame-title">Original Frame</span>
-            <img src={previewInputUrl} alt="Original frame" />
+    <div class="workspace">
+      <!-- Real-time Preview Panel -->
+      {#if isProcessing && previewInputUrl && previewOutputUrl}
+        <section class="preview-panel" aria-label="Real-time processing preview">
+          <div class="panel-header">
+            <h2>Live Preview</h2>
+            <div class="processing-badge">
+              <span class="pulse-dot"></span>
+              Processing
+            </div>
           </div>
-          <div class="comparison-arrow">→</div>
-          <div class="comparison-frame">
-            <span class="frame-title">Generated Frame</span>
-            <img src={previewOutputUrl} alt="Generated frame" />
-          </div>
-        </div>
-        <div class="comparison-stats">
-          <span>Frame {currentJob?.current_frame || 0} / {currentJob?.total_frames || 0}</span>
-          <span class="separator">|</span>
-          <span>{currentJob?.processing_fps || 0} fps</span>
-          <span class="separator">|</span>
-          <span>ETA: {formatTime(currentJob?.eta_seconds || 0)}</span>
-          <span class="separator">|</span>
-          <span class="progress-text">{(currentJob?.progress || 0).toFixed(1)}%</span>
-        </div>
-        <div class="progress-container large">
-          <div class="progress-bar" style="width: {currentJob?.progress || 0}%"></div>
-        </div>
-      </div>
-    {/if}
-
-    <!-- Video Comparison / Output -->
-    {#if isGenerateMode}
-      <!-- MonarchRT: Single output view -->
-      <div class="video-grid single">
-        <div class="video-box wide">
-          <h3>Generated Video</h3>
-          {#if outputVideoUrl}
-            <video
-              bind:this={outputVideoEl}
-              src={outputVideoUrl}
-              controls
-              loop
-            ></video>
-          {:else if isProcessing}
-            <div class="placeholder processing-placeholder">
-              <div class="processing-indicator">
-                <div class="spinner"></div>
-                <span>Generating video with MonarchRT...</span>
-                {#if currentJob}
-                  <span class="processing-detail">{(currentJob.progress || 0).toFixed(1)}% complete</span>
-                {/if}
-              </div>
-              {#if currentJob}
-                <div class="progress-container">
-                  <div class="progress-bar" style="width: {currentJob.progress || 0}%"></div>
-                </div>
-              {/if}
-            </div>
-          {:else}
-            <div class="placeholder">
-              <span>Enter a prompt and click "Generate Video" to create a video with MonarchRT</span>
-            </div>
-          {/if}
-        </div>
-      </div>
-    {:else}
-      <!-- Standard: Side-by-side comparison -->
-      <div class="video-grid">
-        <div class="video-box">
-          <h3>Input Video</h3>
-          {#if inputVideoUrl}
-            <video
-              bind:this={inputVideoEl}
-              src={inputVideoUrl}
-              controls
-              loop
-              on:play={handleInputPlay}
-              on:pause={handleInputPause}
-              on:seeked={handleInputSeek}
-            ></video>
-          {:else}
-            <div class="placeholder">
-              <span>Select or upload a video to begin</span>
-            </div>
-          {/if}
-        </div>
-
-        <div class="video-box">
-          <h3>Output Video</h3>
-          {#if outputVideoUrl}
-            <video
-              bind:this={outputVideoEl}
-              src={outputVideoUrl}
-              controls
-              loop
-              on:play={handleOutputPlay}
-              on:pause={handleOutputPause}
-              on:seeked={handleOutputSeek}
-            ></video>
-          {:else if isProcessing}
-            <div class="placeholder processing-placeholder">
-              <div class="processing-indicator">
-                <div class="spinner"></div>
-                <span>Processing in progress...</span>
-                <span class="processing-detail">See real-time preview above</span>
+          
+          <div class="comparison-view">
+            <div class="frame-card">
+              <span class="frame-label">Original</span>
+              <div class="frame-image">
+                <img src={previewInputUrl} alt="Original frame" loading="lazy"/>
               </div>
             </div>
-          {:else}
-            <div class="placeholder">
-              <span>Output will appear here after processing</span>
+            
+            <div class="transform-arrow">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M5 12h14M12 5l7 7-7 7"/>
+              </svg>
             </div>
-          {/if}
-        </div>
-      </div>
-    {/if}
-
-    <!-- Playback Controls -->
-    {#if inputVideoUrl && outputVideoUrl}
-      <div class="playback-controls">
-        <button on:click={playBoth}>Play Both</button>
-        <button on:click={pauseBoth}>Pause Both</button>
-        <button on:click={restartBoth}>Restart</button>
-        <label class="sync-toggle">
-          <input type="checkbox" bind:checked={syncPlayback} />
-          Sync Playback
-        </label>
-      </div>
-    {/if}
-
-    <!-- Controls Panel -->
-    <div class="controls">
-      {#if isGenerateMode}
-        <!-- MonarchRT Generate Mode Banner -->
-        <div class="mode-banner generate-mode">
-          MonarchRT Text-to-Video &mdash; Generate video from a text prompt (no input video needed)
-        </div>
+            
+            <div class="frame-card">
+              <span class="frame-label">Generated</span>
+              <div class="frame-image">
+                <img src={previewOutputUrl} alt="Generated frame" loading="lazy"/>
+              </div>
+            </div>
+          </div>
+          
+          <div class="progress-metrics">
+            <div class="metric">
+              <span class="metric-value">{currentJob?.current_frame || 0}</span>
+              <span class="metric-label">/ {currentJob?.total_frames || 0} frames</span>
+            </div>
+            <div class="metric-divider"></div>
+            <div class="metric">
+              <span class="metric-value">{currentJob?.processing_fps || 0}</span>
+              <span class="metric-label">fps</span>
+            </div>
+            <div class="metric-divider"></div>
+            <div class="metric">
+              <span class="metric-value">{formatTime(currentJob?.eta_seconds || 0)}</span>
+              <span class="metric-label">remaining</span>
+            </div>
+            <div class="metric-spacer"></div>
+            <div class="metric-progress">{(currentJob?.progress || 0).toFixed(1)}%</div>
+          </div>
+          
+          <div class="progress-track">
+            <div class="progress-fill" style="width: {currentJob?.progress || 0}%"></div>
+          </div>
+        </section>
       {/if}
 
-      <div class="control-row">
-        <!-- Source Selection (hidden in generate mode) -->
-        {#if !isGenerateMode}
-          <div class="control-group source-group">
-            <label>Video Source</label>
-            <div class="source-options">
-              <label class="file-button">
-                Upload MP4
-                <input type="file" accept="video/*" on:change={handleFileUpload} />
-              </label>
+      <!-- Video Player Section -->
+      <section class="player-section" aria-label="Video players">
+        {#if isGenerateMode}
+          <!-- MonarchRT Single View -->
+          <div class="player-grid single">
+            <div class="player-card wide">
+              <div class="card-header">
+                <h3>Generated Output</h3>
+              </div>
+              <div class="player-container">
+                {#if outputVideoUrl}
+                  <video
+                    bind:this={outputVideoEl}
+                    src={outputVideoUrl}
+                    controls
+                    loop
+                    playsinline
+                  ></video>
+                {:else if isProcessing}
+                  <div class="loading-state">
+                    <div class="spinner-artistic">
+                      <div class="spinner-ring"></div>
+                      <div class="spinner-ring"></div>
+                      <div class="spinner-ring"></div>
+                    </div>
+                    <p class="loading-text">Generating with MonarchRT...</p>
+                    <p class="loading-subtext">{(currentJob?.progress || 0).toFixed(1)}% complete</p>
+                    {#if currentJob}
+                      <div class="mini-progress">
+                        <div class="mini-progress-fill" style="width: {currentJob.progress || 0}%"></div>
+                      </div>
+                    {/if}
+                  </div>
+                {:else}
+                  <div class="empty-state">
+                    <div class="empty-icon">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M12 19l7-7 3 3-7 7-3-3z"/>
+                        <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
+                        <path d="M2 2l7.586 7.586"/>
+                        <circle cx="11" cy="11" r="2"/>
+                      </svg>
+                    </div>
+                    <p>Enter a prompt to generate video</p>
+                  </div>
+                {/if}
+              </div>
+            </div>
+          </div>
+        {:else}
+          <!-- Side-by-side Comparison -->
+          <div class="player-grid">
+            <div class="player-card">
+              <div class="card-header">
+                <h3>Input</h3>
+                {#if inputVideoUrl}
+                  <span class="file-badge">Ready</span>
+                {/if}
+              </div>
+              <div class="player-container">
+                {#if inputVideoUrl}
+                  <video
+                    bind:this={inputVideoEl}
+                    src={inputVideoUrl}
+                    controls
+                    loop
+                    playsinline
+                    on:play={handleInputPlay}
+                    on:pause={handleInputPause}
+                    on:seeked={handleInputSeek}
+                  ></video>
+                {:else}
+                  <div class="empty-state">
+                    <div class="empty-icon">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17 8 12 3 7 8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                      </svg>
+                    </div>
+                    <p>Select or upload a video</p>
+                  </div>
+                {/if}
+              </div>
+            </div>
 
-              {#if serverVideos.length > 0}
-                <select
-                  value={selectedServerVideo}
-                  on:change={(e) => {
-                    const video = serverVideos.find(v => v.name === e.currentTarget.value);
-                    if (video) selectServerVideo(video);
-                  }}
-                >
-                  <option value="" disabled>Select Server Video</option>
-                  {#each serverVideos as video}
-                    <option value={video.name}>{video.name} ({video.duration}s)</option>
+            <div class="player-card">
+              <div class="card-header">
+                <h3>Output</h3>
+                {#if outputVideoUrl}
+                  <span class="file-badge success">Complete</span>
+                {:else if isProcessing}
+                  <span class="file-badge processing">Processing</span>
+                {/if}
+              </div>
+              <div class="player-container">
+                {#if outputVideoUrl}
+                  <video
+                    bind:this={outputVideoEl}
+                    src={outputVideoUrl}
+                    controls
+                    loop
+                    playsinline
+                    on:play={handleOutputPlay}
+                    on:pause={handleOutputPause}
+                    on:seeked={handleOutputSeek}
+                  ></video>
+                {:else if isProcessing}
+                  <div class="loading-state">
+                    <div class="spinner-artistic">
+                      <div class="spinner-ring"></div>
+                      <div class="spinner-ring"></div>
+                    </div>
+                    <p class="loading-text">Transforming...</p>
+                    <p class="loading-subtext">See live preview above</p>
+                  </div>
+                {:else}
+                  <div class="empty-state">
+                    <div class="empty-icon">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+                        <polyline points="2 17 12 22 22 17"/>
+                        <polyline points="2 12 12 17 22 12"/>
+                      </svg>
+                    </div>
+                    <p>Output appears here</p>
+                  </div>
+                {/if}
+              </div>
+            </div>
+          </div>
+        {/if}
+
+        <!-- Playback Controls -->
+        {#if inputVideoUrl && outputVideoUrl}
+          <div class="playback-bar">
+            <button class="control-btn" on:click={playBoth} title="Play both">
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+              </svg>
+              <span>Play</span>
+            </button>
+            <button class="control-btn" on:click={pauseBoth} title="Pause both">
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="4" width="4" height="16"/>
+                <rect x="14" y="4" width="4" height="16"/>
+              </svg>
+              <span>Pause</span>
+            </button>
+            <button class="control-btn" on:click={restartBoth} title="Restart">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="23 4 23 10 17 10"/>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+              </svg>
+              <span>Restart</span>
+            </button>
+            <div class="sync-toggle">
+              <label class="toggle-switch">
+                <input type="checkbox" bind:checked={syncPlayback} />
+                <span class="toggle-slider"></span>
+              </label>
+              <span class="toggle-label">Sync playback</span>
+            </div>
+          </div>
+        {/if}
+      </section>
+
+      <!-- Control Panel -->
+      <section class="control-panel" aria-label="Processing controls">
+        {#if isGenerateMode}
+          <div class="mode-indicator generate">
+            <span class="mode-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 19l7-7 3 3-7 7-3-3z"/>
+                <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
+              </svg>
+            </span>
+            <span class="mode-text">MonarchRT Text-to-Video Mode — Generate video from text prompts</span>
+          </div>
+        {/if}
+
+        <div class="controls-grid">
+          {#if !isGenerateMode}
+            <div class="control-group wide">
+              <label class="control-label">Video Source</label>
+              <div class="source-controls">
+                <label class="upload-button">
+                  <input type="file" accept="video/*" on:change={handleFileUpload} />
+                  <span class="upload-content">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                      <polyline points="17 8 12 3 7 8"/>
+                      <line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                    Upload MP4
+                  </span>
+                </label>
+
+                {#if serverVideos.length > 0}
+                  <div class="select-wrapper">
+                    <select
+                      value={selectedServerVideo}
+                      on:change={(e) => {
+                        const video = serverVideos.find(v => v.name === e.currentTarget.value);
+                        if (video) selectServerVideo(video);
+                      }}
+                    >
+                      <option value="">Select from library...</option>
+                      {#each serverVideos as video}
+                        <option value={video.name}>{video.name} ({video.duration}s)</option>
+                      {/each}
+                    </select>
+                    <span class="select-arrow">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="6 9 12 15 18 9"/>
+                      </svg>
+                    </span>
+                  </div>
+                {/if}
+              </div>
+
+              {#if uploadedFile}
+                <span class="selected-indicator">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="20 6 9 17 4 12"/>
+                  </svg>
+                  {uploadedFile.original_name}
+                </span>
+              {:else if selectedServerVideo}
+                <span class="selected-indicator">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="20 6 9 17 4 12"/>
+                  </svg>
+                  {selectedServerVideo}
+                </span>
+              {/if}
+            </div>
+          {/if}
+
+          <div class="control-group">
+            <label class="control-label">AI Model</label>
+            <div class="select-wrapper">
+              {#if settings}
+                <select bind:value={selectedModel}>
+                  {#each Object.entries(settings.models) as [key, desc]}
+                    <option value={key}>{desc}</option>
                   {/each}
                 </select>
+              {:else}
+                <select disabled>
+                  <option>Loading models...</option>
+                </select>
               {/if}
+              <span class="select-arrow">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="6 9 12 15 18 9"/>
+                </svg>
+              </span>
             </div>
-
-            {#if uploadedFile}
-              <span class="selected-file">Uploaded: {uploadedFile.original_name}</span>
-            {:else if selectedServerVideo}
-              <span class="selected-file">Selected: {selectedServerVideo}</span>
-            {/if}
           </div>
-        {/if}
 
-        <!-- Model Selection -->
-        <div class="control-group">
-          <label>Model</label>
-          {#if settings}
-            <select bind:value={selectedModel}>
-              {#each Object.entries(settings.models) as [key, desc]}
-                <option value={key}>{desc}</option>
-              {/each}
-            </select>
+          {#if isGenerateMode}
+            <div class="control-group">
+              <label class="control-label">Duration</label>
+              <div class="select-wrapper">
+                <select bind:value={numFrames}>
+                  <option value={21}>21 frames (~1.3s)</option>
+                  <option value={41}>41 frames (~2.6s)</option>
+                  <option value={61}>61 frames (~3.8s)</option>
+                  <option value={81}>81 frames (~5s)</option>
+                </select>
+                <span class="select-arrow">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="6 9 12 15 18 9"/>
+                  </svg>
+                </span>
+              </div>
+            </div>
           {/if}
         </div>
 
-        <!-- Frame Count (MonarchRT generate mode) -->
-        {#if isGenerateMode}
-          <div class="control-group">
-            <label>Frames</label>
-            <select bind:value={numFrames}>
-              <option value={21}>21 frames (~1.3s)</option>
-              <option value={41}>41 frames (~2.6s)</option>
-              <option value={61}>61 frames (~3.8s)</option>
-              <option value={81}>81 frames (~5s)</option>
-            </select>
+        {#if !isGenerateMode}
+          <div class="control-group full">
+            <label class="control-label">Style Preset</label>
+            <div class="preset-grid">
+              {#if settings?.presets}
+                {#each Object.entries(settings.presets) as [key, preset]}
+                  <button
+                    class="preset-chip"
+                    class:active={selectedPreset === key}
+                    on:click={() => selectPreset(key)}
+                    type="button"
+                  >
+                    {preset.description}
+                  </button>
+                {/each}
+              {/if}
+            </div>
           </div>
         {/if}
-      </div>
 
-      <!-- Style Preset (for video-to-video mode) -->
-      {#if !isGenerateMode}
-        <div class="control-group">
-          <label>Style Preset</label>
-          <div class="preset-grid">
-            {#if settings?.presets}
-              {#each Object.entries(settings.presets) as [key, preset]}
-                <button
-                  class="preset-btn"
-                  class:active={selectedPreset === key}
-                  on:click={() => selectPreset(key)}
-                >
-                  {preset.description}
-                </button>
-              {/each}
-            {/if}
-          </div>
+        <div class="control-group full">
+          <label class="control-label">
+            {isGenerateMode ? 'Describe your video' : 'Transformation prompt'}
+          </label>
+          <input
+            type="text"
+            class="prompt-input"
+            bind:value={prompt}
+            placeholder={isGenerateMode
+              ? 'A golden retriever running through wildflowers, cinematic lighting...'
+              : 'oil painting, vibrant colors, masterpiece quality...'}
+          />
         </div>
+
+        <button
+          class="action-button"
+          class:generate={isGenerateMode}
+          on:click={startProcessing}
+          disabled={isProcessing || (!isGenerateMode && !inputVideoUrl)}
+        >
+          {#if isProcessing}
+            <span class="btn-spinner"></span>
+            <span>{isGenerateMode ? 'Generating...' : 'Processing...'}</span>
+          {:else}
+            <span>{isGenerateMode ? 'Generate Video' : 'Process Video'}</span>
+          {/if}
+        </button>
+      </section>
+
+      <!-- Job History -->
+      {#if jobHistory.length > 0}
+        <section class="history-panel" aria-label="Job history">
+          <h3 class="panel-title">Recent Jobs</h3>
+          <div class="job-list">
+            {#each jobHistory as job}
+              <button
+                class="job-item"
+                class:completed={job.status === 'completed'}
+                class:failed={job.status === 'failed'}
+                class:processing={job.status === 'processing'}
+                on:click={() => loadJob(job)}
+                disabled={job.status !== 'completed'}
+                type="button"
+              >
+                <div class="job-content">
+                  <span class="job-name">{job.input_path}</span>
+                  <span class="job-prompt">{job.prompt.substring(0, 45)}{job.prompt.length > 45 ? '...' : ''}</span>
+                </div>
+                <div class="job-meta">
+                  {#if job.status === 'processing'}
+                    <span class="status-badge processing">{(job.progress || 0).toFixed(0)}%</span>
+                  {:else if job.status === 'completed'}
+                    <span class="status-badge completed">Done</span>
+                  {:else if job.status === 'failed'}
+                    <span class="status-badge failed">Failed</span>
+                  {:else}
+                    <span class="status-badge pending">Queued</span>
+                  {/if}
+                  {#if job.status === 'completed' || job.status === 'failed'}
+                    <button 
+                      class="delete-action" 
+                      on:click={(e) => deleteJob(job, e)}
+                      title="Delete job"
+                      type="button"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                      </svg>
+                    </button>
+                  {/if}
+                </div>
+              </button>
+            {/each}
+          </div>
+        </section>
       {/if}
 
-      <!-- Prompt -->
-      <div class="control-group">
-        <label>{isGenerateMode ? 'Video Description' : 'Prompt (editable)'}</label>
-        <input
-          type="text"
-          bind:value={prompt}
-          placeholder={isGenerateMode
-            ? 'Describe the video you want to generate...'
-            : 'Enter prompt for transformation...'}
-        />
-      </div>
-
-      <!-- Process / Generate Button -->
-      <button
-        class="process-btn"
-        class:generate-btn={isGenerateMode}
-        on:click={startProcessing}
-        disabled={isProcessing || (!isGenerateMode && !inputVideoUrl)}
-      >
-        {#if isProcessing}
-          {isGenerateMode ? 'Generating...' : 'Processing...'}
-        {:else}
-          {isGenerateMode ? 'Generate Video' : 'Process Video'}
-        {/if}
-      </button>
+      <!-- Output Gallery -->
+      <OutputGallery />
     </div>
-
-    <!-- Job History -->
-    {#if jobHistory.length > 0}
-      <div class="history">
-        <h3>Processing History</h3>
-        <div class="job-list">
-          {#each jobHistory as job}
-            <div
-              class="job-item"
-              class:completed={job.status === 'completed'}
-              class:failed={job.status === 'failed'}
-              class:processing={job.status === 'processing'}
-              on:click={() => loadJob(job)}
-              on:keydown={(e) => e.key === 'Enter' && loadJob(job)}
-              role="button"
-              tabindex="0"
-            >
-              <div class="job-info">
-                <span class="job-name">{job.input_path}</span>
-                <span class="job-prompt">{job.prompt.substring(0, 50)}{job.prompt.length > 50 ? '...' : ''}</span>
-              </div>
-              <div class="job-status">
-                {#if job.status === 'processing'}
-                  <span class="status processing">{(job.progress || 0).toFixed(0)}%</span>
-                {:else if job.status === 'completed'}
-                  <span class="status completed">Done</span>
-                {:else if job.status === 'failed'}
-                  <span class="status failed">Failed</span>
-                {:else}
-                  <span class="status pending">Pending</span>
-                {/if}
-                {#if job.status === 'completed' || job.status === 'failed'}
-                  <button class="delete-btn" on:click={(e) => deleteJob(job, e)}>x</button>
-                {/if}
-              </div>
-            </div>
-          {/each}
-        </div>
-      </div>
-    {/if}
-
-    <!-- Output Library -->
-    <OutputGallery />
-  </div>
   {/if}
 </main>
 
 <style>
-  :global(body) {
-    margin: 0;
-    padding: 0;
-    background: #0a0a12;
-    color: #eee;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  }
-
-  main {
-    max-width: 1400px;
+  /* Container */
+  .studio-container {
+    max-width: 1440px;
     margin: 0 auto;
-    padding: 20px;
+    padding: var(--space-xl);
+    position: relative;
+    z-index: 2;
   }
 
-  header {
+  @media (max-width: 768px) {
+    .studio-container {
+      padding: var(--space-md);
+    }
+  }
+
+  /* Header */
+  .studio-header {
     text-align: center;
-    margin-bottom: 30px;
-    padding-bottom: 20px;
-    border-bottom: 1px solid #333;
+    margin-bottom: var(--space-3xl);
+    padding: var(--space-2xl) 0;
   }
 
-  h1 {
-    font-size: 2rem;
-    font-weight: 600;
-    margin: 0;
+  .header-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-md);
+    margin-bottom: var(--space-md);
   }
 
-  .subtitle {
-    color: #888;
-    margin: 8px 0 0 0;
-  }
-
-  .tab-nav {
+  .brand-icon {
+    width: 56px;
+    height: 56px;
+    background: linear-gradient(135deg, var(--color-accent-primary), #f97316);
+    border-radius: var(--radius-lg);
     display: flex;
-    gap: 8px;
-    margin-bottom: 24px;
-    padding: 4px;
-    background: #16213e;
-    border-radius: 12px;
-    width: fit-content;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 8px 32px rgba(245, 158, 11, 0.3);
   }
 
-  .tab-btn {
-    background: transparent;
-    border: none;
-    color: #888;
-    padding: 12px 24px;
-    border-radius: 8px;
-    cursor: pointer;
-    font-size: 0.95rem;
-    font-weight: 500;
-    transition: all 0.2s;
-  }
-
-  .tab-btn:hover {
-    color: #ccc;
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  .tab-btn.active {
-    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  .brand-icon svg {
+    width: 32px;
+    height: 32px;
     color: white;
   }
 
-  .error-banner {
-    background: #7f1d1d;
-    color: #fca5a5;
-    padding: 12px 20px;
-    border-radius: 8px;
-    margin-bottom: 16px;
-    font-size: 0.9rem;
+  .brand-text {
+    text-align: left;
   }
 
-  .container {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
+  .brand-text h1 {
+    font-family: var(--font-display);
+    font-size: var(--text-3xl);
+    font-weight: 600;
+    color: var(--color-text-primary);
+    margin: 0;
+    letter-spacing: -0.02em;
   }
 
-  .video-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 20px;
-  }
-
-  .video-box {
-    background: #16213e;
-    border-radius: 12px;
-    padding: 16px;
-  }
-
-  .video-box h3 {
-    font-size: 0.9rem;
+  .tagline {
+    font-size: var(--text-sm);
+    color: var(--color-accent-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
     font-weight: 500;
-    margin: 0 0 12px 0;
-    color: #888;
   }
 
-  .video-box video {
-    width: 100%;
-    aspect-ratio: 1;
-    object-fit: contain;
-    border-radius: 8px;
-    background: #0f0f1a;
+  .header-description {
+    color: var(--color-text-secondary);
+    font-size: var(--text-lg);
+    margin: 0;
   }
 
-  .placeholder {
-    width: 100%;
-    aspect-ratio: 1;
+  /* Tab Navigation */
+  .tab-navigation {
     display: flex;
-    flex-direction: column;
+    gap: var(--space-xs);
+    margin-bottom: var(--space-2xl);
+    padding: var(--space-xs);
+    background: var(--color-bg-secondary);
+    border-radius: var(--radius-xl);
+    width: fit-content;
+    margin-left: auto;
+    margin-right: auto;
+    border: 1px solid var(--color-border);
+  }
+
+  .tab-button {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-md) var(--space-xl);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-lg);
+    color: var(--color-text-secondary);
+    font-family: var(--font-body);
+    font-size: var(--text-base);
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-base);
+  }
+
+  .tab-button:hover {
+    color: var(--color-text-primary);
+    background: var(--color-bg-hover);
+  }
+
+  .tab-button.active {
+    background: linear-gradient(135deg, var(--color-accent-primary), #f97316);
+    color: white;
+    box-shadow: 0 4px 16px rgba(245, 158, 11, 0.35);
+  }
+
+  .tab-icon svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  @media (max-width: 640px) {
+    .tab-button {
+      padding: var(--space-sm) var(--space-lg);
+    }
+    
+    .tab-label {
+      display: none;
+    }
+  }
+
+  /* Error Toast */
+  .error-toast {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-md) var(--space-lg);
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: var(--radius-md);
+    color: #fca5a5;
+    margin-bottom: var(--space-xl);
+  }
+
+  .error-icon {
+    width: 24px;
+    height: 24px;
+    background: var(--color-error);
+    border-radius: 50%;
+    display: flex;
     align-items: center;
     justify-content: center;
-    background: #0f0f1a;
-    border-radius: 8px;
-    color: #666;
-    gap: 12px;
+    font-weight: 700;
+    color: white;
+    flex-shrink: 0;
   }
 
-  .progress-container {
-    width: 80%;
+  /* Workspace */
+  .workspace {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xl);
+  }
+
+  /* Preview Panel */
+  .preview-panel {
+    background: linear-gradient(145deg, var(--color-bg-secondary), var(--color-bg-tertiary));
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    padding: var(--space-xl);
+    box-shadow: var(--shadow-lg);
+    animation: slideDown 0.4s ease-out;
+  }
+
+  @keyframes slideDown {
+    from {
+      opacity: 0;
+      transform: translateY(-20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-lg);
+  }
+
+  .panel-header h2 {
+    font-family: var(--font-display);
+    font-size: var(--text-xl);
+    font-weight: 500;
+    color: var(--color-text-primary);
+    margin: 0;
+  }
+
+  .processing-badge {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-xs) var(--space-md);
+    background: var(--color-accent-subtle);
+    border: 1px solid var(--color-accent-glow);
+    border-radius: 100px;
+    color: var(--color-accent-secondary);
+    font-size: var(--text-sm);
+    font-weight: 500;
+  }
+
+  .pulse-dot {
+    width: 8px;
     height: 8px;
-    background: #1f2937;
-    border-radius: 4px;
+    background: var(--color-accent-primary);
+    border-radius: 50%;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.8); }
+  }
+
+  .comparison-view {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: var(--space-lg);
+    align-items: center;
+    margin-bottom: var(--space-lg);
+  }
+
+  @media (max-width: 900px) {
+    .comparison-view {
+      grid-template-columns: 1fr;
+    }
+    
+    .transform-arrow {
+      transform: rotate(90deg);
+    }
+  }
+
+  .frame-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .frame-label {
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  .frame-image {
+    aspect-ratio: 1;
+    background: var(--color-bg-primary);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    border: 1px solid var(--color-border);
+  }
+
+  .frame-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  .transform-arrow {
+    color: var(--color-accent-primary);
+  }
+
+  .transform-arrow svg {
+    width: 32px;
+    height: 32px;
+  }
+
+  .progress-metrics {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    margin-bottom: var(--space-md);
+    flex-wrap: wrap;
+  }
+
+  .metric {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-xs);
+  }
+
+  .metric-value {
+    font-family: var(--font-display);
+    font-size: var(--text-xl);
+    font-weight: 600;
+    color: var(--color-text-primary);
+  }
+
+  .metric-label {
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+  }
+
+  .metric-divider {
+    width: 1px;
+    height: 20px;
+    background: var(--color-border);
+  }
+
+  .metric-spacer {
+    flex: 1;
+  }
+
+  .metric-progress {
+    font-family: var(--font-display);
+    font-size: var(--text-2xl);
+    font-weight: 600;
+    color: var(--color-accent-primary);
+  }
+
+  .progress-track {
+    height: 6px;
+    background: var(--color-bg-primary);
+    border-radius: 3px;
     overflow: hidden;
   }
 
-  .progress-bar {
+  .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+    background: linear-gradient(90deg, var(--color-accent-primary), #f97316);
+    border-radius: 3px;
     transition: width 0.3s ease;
+    box-shadow: 0 0 20px var(--color-accent-glow);
   }
 
-  .preset-grid {
+  /* Player Section */
+  .player-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+  }
+
+  .player-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 8px;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-lg);
   }
 
-  .preset-btn {
-    background: #1f2937;
-    border: 1px solid #374151;
-    color: #ccc;
-    padding: 8px 12px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 0.8rem;
-    transition: all 0.2s;
-    text-align: center;
-  }
-
-  .preset-btn:hover {
-    background: #374151;
-    color: #fff;
-  }
-
-  .preset-btn.active {
-    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
-    border-color: #60a5fa;
-    color: #fff;
-    font-weight: 500;
-  }
-
-  /* Real-time Comparison Section */
-  .realtime-comparison {
-    background: linear-gradient(135deg, #1e3a5f, #16213e);
-    border: 2px solid #3b82f6;
-    border-radius: 16px;
-    padding: 20px;
-    margin-bottom: 20px;
-  }
-
-  .realtime-comparison h3 {
-    text-align: center;
-    color: #60a5fa;
-    margin: 0 0 16px 0;
-    font-size: 1.1rem;
-  }
-
-  .comparison-grid {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 20px;
-  }
-
-  .comparison-frame {
-    flex: 1;
-    max-width: 400px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .comparison-frame img {
+  .player-grid.single {
+    grid-template-columns: 1fr;
+    max-width: 900px;
+    margin: 0 auto;
     width: 100%;
-    aspect-ratio: 1;
-    object-fit: contain;
-    border-radius: 8px;
-    background: #0f0f1a;
   }
 
-  .frame-title {
-    font-size: 0.85rem;
-    color: #888;
-    text-align: center;
+  @media (max-width: 900px) {
+    .player-grid {
+      grid-template-columns: 1fr;
+    }
   }
 
-  .comparison-arrow {
-    font-size: 2rem;
-    color: #60a5fa;
-    padding: 0 10px;
+  .player-card {
+    background: var(--color-bg-card);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    overflow: hidden;
+    backdrop-filter: blur(10px);
+    transition: all var(--transition-base);
   }
 
-  .comparison-stats {
+  .player-card:hover {
+    border-color: rgba(255, 255, 255, 0.15);
+    box-shadow: var(--shadow-lg);
+  }
+
+  .card-header {
     display: flex;
-    justify-content: center;
+    justify-content: space-between;
     align-items: center;
-    gap: 12px;
-    margin-top: 16px;
-    color: #ccc;
-    font-size: 0.9rem;
+    padding: var(--space-md) var(--space-lg);
+    background: var(--color-bg-secondary);
+    border-bottom: 1px solid var(--color-border);
   }
 
-  .separator {
-    color: #444;
+  .card-header h3 {
+    font-family: var(--font-display);
+    font-size: var(--text-base);
+    font-weight: 500;
+    color: var(--color-text-primary);
+    margin: 0;
   }
 
-  .progress-text {
-    color: #60a5fa;
-    font-weight: 600;
+  .file-badge {
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--color-bg-tertiary);
+    border-radius: 100px;
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
 
-  .progress-container.large {
-    margin-top: 12px;
-    height: 10px;
+  .file-badge.success {
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--color-success);
   }
 
-  /* Processing indicator */
-  .processing-placeholder {
-    background: #0f0f1a;
+  .file-badge.processing {
+    background: var(--color-accent-subtle);
+    color: var(--color-accent-secondary);
   }
 
-  .processing-indicator {
+  .player-container {
+    aspect-ratio: 1;
+    background: var(--color-bg-primary);
+    position: relative;
+  }
+
+  .player-card.wide .player-container {
+    aspect-ratio: 16/9;
+  }
+
+  .player-container video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  /* Empty & Loading States */
+  .empty-state,
+  .loading-state {
+    width: 100%;
+    height: 100%;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 12px;
-    color: #60a5fa;
+    justify-content: center;
+    gap: var(--space-md);
+    color: var(--color-text-muted);
+    padding: var(--space-xl);
+    text-align: center;
   }
 
-  .processing-detail {
-    font-size: 0.8rem;
-    color: #666;
+  .empty-icon {
+    width: 64px;
+    height: 64px;
+    color: var(--color-text-muted);
+    opacity: 0.5;
   }
 
-  .spinner {
-    width: 40px;
-    height: 40px;
-    border: 3px solid #1f2937;
-    border-top-color: #3b82f6;
+  .empty-icon svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  .empty-state p {
+    margin: 0;
+    font-size: var(--text-base);
+  }
+
+  /* Artistic Spinner */
+  .spinner-artistic {
+    position: relative;
+    width: 60px;
+    height: 60px;
+  }
+
+  .spinner-ring {
+    position: absolute;
+    inset: 0;
+    border: 2px solid transparent;
+    border-top-color: var(--color-accent-primary);
     border-radius: 50%;
     animation: spin 1s linear infinite;
+  }
+
+  .spinner-ring:nth-child(2) {
+    inset: 8px;
+    border-top-color: var(--color-accent-secondary);
+    animation-duration: 1.5s;
+    animation-direction: reverse;
+  }
+
+  .spinner-ring:nth-child(3) {
+    inset: 16px;
+    border-top-color: #f97316;
+    animation-duration: 2s;
   }
 
   @keyframes spin {
     to { transform: rotate(360deg); }
   }
 
-  .playback-controls {
+  .loading-text {
+    font-family: var(--font-display);
+    font-size: var(--text-lg);
+    color: var(--color-text-primary);
+    margin: 0;
+  }
+
+  .loading-subtext {
+    font-size: var(--text-sm);
+    color: var(--color-text-muted);
+    margin: 0;
+  }
+
+  .mini-progress {
+    width: 200px;
+    height: 4px;
+    background: var(--color-bg-secondary);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: var(--space-sm);
+  }
+
+  .mini-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--color-accent-primary), #f97316);
+    border-radius: 2px;
+    transition: width 0.3s ease;
+  }
+
+  /* Playback Bar */
+  .playback-bar {
     display: flex;
-    gap: 12px;
-    justify-content: center;
     align-items: center;
-    padding: 12px;
-    background: #16213e;
-    border-radius: 12px;
+    justify-content: center;
+    gap: var(--space-md);
+    padding: var(--space-md);
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
   }
 
-  .playback-controls button {
-    background: #3b82f6;
-    border: none;
-    color: white;
-    padding: 10px 20px;
-    border-radius: 8px;
+  .control-btn {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-lg);
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-text-primary);
+    font-family: var(--font-body);
+    font-size: var(--text-sm);
+    font-weight: 500;
     cursor: pointer;
-    font-size: 0.9rem;
+    transition: all var(--transition-fast);
   }
 
-  .playback-controls button:hover {
-    background: #2563eb;
+  .control-btn:hover {
+    background: var(--color-bg-hover);
+    border-color: rgba(255, 255, 255, 0.2);
+  }
+
+  .control-btn svg {
+    width: 16px;
+    height: 16px;
   }
 
   .sync-toggle {
     display: flex;
     align-items: center;
-    gap: 8px;
-    color: #888;
-    cursor: pointer;
-    margin-left: 20px;
+    gap: var(--space-sm);
+    margin-left: var(--space-md);
+    padding-left: var(--space-md);
+    border-left: 1px solid var(--color-border);
   }
 
-  .sync-toggle input {
+  .toggle-switch {
+    position: relative;
+    width: 44px;
+    height: 24px;
+    cursor: pointer;
+  }
+
+  .toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+
+  .toggle-slider {
+    position: absolute;
+    inset: 0;
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border);
+    border-radius: 24px;
+    transition: all var(--transition-base);
+  }
+
+  .toggle-slider::before {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
     width: 18px;
     height: 18px;
+    background: var(--color-text-secondary);
+    border-radius: 50%;
+    transition: all var(--transition-base);
   }
 
-  .controls {
-    background: #16213e;
-    border-radius: 12px;
-    padding: 20px;
+  .toggle-switch input:checked + .toggle-slider {
+    background: var(--color-accent-subtle);
+    border-color: var(--color-accent-glow);
+  }
+
+  .toggle-switch input:checked + .toggle-slider::before {
+    transform: translateX(20px);
+    background: var(--color-accent-primary);
+  }
+
+  .toggle-label {
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  @media (max-width: 640px) {
+    .playback-bar {
+      flex-wrap: wrap;
+    }
+    
+    .sync-toggle {
+      margin-left: 0;
+      padding-left: 0;
+      border-left: none;
+      width: 100%;
+      justify-content: center;
+    }
+  }
+
+  /* Control Panel */
+  .control-panel {
+    background: var(--color-bg-card);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    padding: var(--space-xl);
+    backdrop-filter: blur(10px);
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: var(--space-xl);
   }
 
-  .control-row {
+  .mode-indicator {
     display: flex;
-    gap: 20px;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-md) var(--space-lg);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+  }
+
+  .mode-indicator.generate {
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(249, 115, 22, 0.1));
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    color: var(--color-accent-secondary);
+  }
+
+  .mode-icon svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .controls-grid {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: var(--space-lg);
+  }
+
+  @media (max-width: 768px) {
+    .controls-grid {
+      grid-template-columns: 1fr;
+    }
   }
 
   .control-group {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    flex: 1;
+    gap: var(--space-sm);
   }
 
-  .source-group {
-    flex: 2;
+  .control-group.wide {
+    grid-column: span 1;
   }
 
-  .control-group label {
-    font-size: 0.85rem;
-    color: #888;
+  .control-group.full {
+    grid-column: 1 / -1;
+  }
+
+  .control-label {
+    font-size: var(--text-sm);
     font-weight: 500;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
   }
 
-  .source-options {
+  .source-controls {
     display: flex;
-    gap: 12px;
+    gap: var(--space-md);
     flex-wrap: wrap;
   }
 
-  .selected-file {
-    font-size: 0.8rem;
-    color: #60a5fa;
-  }
-
-  button, select, .file-button {
-    background: #1f2937;
-    border: 1px solid #374151;
-    color: #eee;
-    padding: 10px 16px;
-    border-radius: 8px;
+  .upload-button {
+    position: relative;
     cursor: pointer;
-    font-size: 0.9rem;
-    transition: all 0.2s;
+    flex-shrink: 0;
   }
 
-  button:hover:not(:disabled), select:hover, .file-button:hover {
-    background: #374151;
+  .upload-button input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
   }
 
-  button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .file-button {
-    display: inline-block;
-  }
-
-  .file-button input {
-    display: none;
-  }
-
-  input[type="text"] {
-    background: #1f2937;
-    border: 1px solid #374151;
-    color: #eee;
-    padding: 12px 16px;
-    border-radius: 8px;
-    font-size: 0.95rem;
-    width: 100%;
-    box-sizing: border-box;
-  }
-
-  input[type="text"]:focus {
-    outline: none;
-    border-color: #3b82f6;
-  }
-
-  .process-btn {
-    background: linear-gradient(135deg, #3b82f6, #8b5cf6);
-    border: none;
-    padding: 14px 28px;
-    font-size: 1rem;
-    font-weight: 600;
-    align-self: center;
-  }
-
-  .process-btn:hover:not(:disabled) {
-    background: linear-gradient(135deg, #2563eb, #7c3aed);
-  }
-
-  .history {
-    background: #16213e;
-    border-radius: 12px;
-    padding: 16px;
-  }
-
-  .history h3 {
-    font-size: 0.9rem;
+  .upload-content {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-md) var(--space-lg);
+    background: var(--color-bg-tertiary);
+    border: 1px dashed var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-text-primary);
+    font-size: var(--text-sm);
     font-weight: 500;
-    margin: 0 0 12px 0;
-    color: #888;
+    transition: all var(--transition-fast);
+  }
+
+  .upload-button:hover .upload-content {
+    background: var(--color-bg-hover);
+    border-color: var(--color-accent-primary);
+    color: var(--color-accent-secondary);
+  }
+
+  .upload-content svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .select-wrapper {
+    position: relative;
+    flex: 1;
+    min-width: 200px;
+  }
+
+  .select-wrapper select {
+    width: 100%;
+    padding: var(--space-md) var(--space-xl) var(--space-md) var(--space-md);
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-text-primary);
+    font-family: var(--font-body);
+    font-size: var(--text-sm);
+    cursor: pointer;
+    appearance: none;
+    transition: all var(--transition-fast);
+  }
+
+  .select-wrapper select:hover,
+  .select-wrapper select:focus {
+    border-color: var(--color-border-focus);
+  }
+
+  .select-arrow {
+    position: absolute;
+    right: var(--space-md);
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+    color: var(--color-text-muted);
+  }
+
+  .select-arrow svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .selected-indicator {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) 0;
+    color: var(--color-accent-secondary);
+    font-size: var(--text-sm);
+  }
+
+  .selected-indicator svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  /* Preset Grid */
+  .preset-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: var(--space-sm);
+  }
+
+  .preset-chip {
+    padding: var(--space-sm) var(--space-md);
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-text-secondary);
+    font-family: var(--font-body);
+    font-size: var(--text-sm);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    text-align: center;
+  }
+
+  .preset-chip:hover {
+    background: var(--color-bg-hover);
+    border-color: rgba(255, 255, 255, 0.15);
+    color: var(--color-text-primary);
+  }
+
+  .preset-chip.active {
+    background: linear-gradient(135deg, var(--color-accent-primary), #f97316);
+    border-color: transparent;
+    color: white;
+    box-shadow: 0 4px 16px rgba(245, 158, 11, 0.35);
+  }
+
+  /* Prompt Input */
+  .prompt-input {
+    width: 100%;
+    padding: var(--space-md) var(--space-lg);
+    background: var(--color-bg-tertiary);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-text-primary);
+    font-family: var(--font-body);
+    font-size: var(--text-base);
+    transition: all var(--transition-fast);
+  }
+
+  .prompt-input:hover,
+  .prompt-input:focus {
+    border-color: var(--color-border-focus);
+    outline: none;
+  }
+
+  .prompt-input::placeholder {
+    color: var(--color-text-muted);
+  }
+
+  /* Action Button */
+  .action-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-md);
+    padding: var(--space-lg) var(--space-2xl);
+    background: linear-gradient(135deg, var(--color-accent-primary), #f97316);
+    border: none;
+    border-radius: var(--radius-md);
+    color: white;
+    font-family: var(--font-display);
+    font-size: var(--text-lg);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-base);
+    box-shadow: 0 4px 20px rgba(245, 158, 11, 0.35);
+    align-self: center;
+    min-width: 240px;
+  }
+
+  .action-button:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 30px rgba(245, 158, 11, 0.45);
+  }
+
+  .action-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  .action-button.generate {
+    background: linear-gradient(135deg, #10b981, #059669);
+    box-shadow: 0 4px 20px rgba(16, 185, 129, 0.35);
+  }
+
+  .action-button.generate:hover:not(:disabled) {
+    box-shadow: 0 8px 30px rgba(16, 185, 129, 0.45);
+  }
+
+  .btn-spinner {
+    width: 20px;
+    height: 20px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  /* History Panel */
+  .history-panel {
+    background: var(--color-bg-card);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    padding: var(--space-xl);
+    backdrop-filter: blur(10px);
+  }
+
+  .panel-title {
+    font-family: var(--font-display);
+    font-size: var(--text-lg);
+    font-weight: 500;
+    color: var(--color-text-primary);
+    margin: 0 0 var(--space-lg) 0;
   }
 
   .job-list {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    max-height: 200px;
+    gap: var(--space-sm);
+    max-height: 280px;
     overflow-y: auto;
   }
 
@@ -1129,143 +1818,120 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 10px 12px;
-    background: #1f2937;
-    border-radius: 8px;
+    padding: var(--space-md);
+    background: var(--color-bg-tertiary);
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    text-align: left;
     cursor: pointer;
-    transition: background 0.2s;
+    transition: all var(--transition-fast);
+    width: 100%;
   }
 
-  .job-item:hover {
-    background: #374151;
+  .job-item:hover:not(:disabled) {
+    background: var(--color-bg-hover);
+    border-color: var(--color-border);
+  }
+
+  .job-item:disabled {
+    opacity: 0.6;
+    cursor: default;
   }
 
   .job-item.completed {
-    border-left: 3px solid #4ade80;
+    border-left: 3px solid var(--color-success);
   }
 
   .job-item.failed {
-    border-left: 3px solid #f87171;
+    border-left: 3px solid var(--color-error);
   }
 
   .job-item.processing {
-    border-left: 3px solid #60a5fa;
+    border-left: 3px solid var(--color-accent-primary);
   }
 
-  .job-info {
+  .job-content {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--space-xs);
+    min-width: 0;
   }
 
   .job-name {
-    font-size: 0.9rem;
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--color-text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .job-prompt {
-    font-size: 0.75rem;
-    color: #888;
+    font-size: var(--text-xs);
+    color: var(--color-text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  .job-status {
+  .job-meta {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-sm);
+    flex-shrink: 0;
   }
 
-  .status {
-    font-size: 0.8rem;
-    padding: 4px 8px;
-    border-radius: 4px;
+  .status-badge {
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: 100px;
+    font-size: var(--text-xs);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
   }
 
-  .status.completed {
-    background: #166534;
-    color: #4ade80;
+  .status-badge.completed {
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--color-success);
   }
 
-  .status.failed {
-    background: #7f1d1d;
-    color: #f87171;
+  .status-badge.failed {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--color-error);
   }
 
-  .status.processing {
-    background: #1e3a5f;
-    color: #60a5fa;
+  .status-badge.processing {
+    background: var(--color-accent-subtle);
+    color: var(--color-accent-secondary);
   }
 
-  .status.pending {
-    background: #374151;
-    color: #9ca3af;
+  .status-badge.pending {
+    background: var(--color-bg-secondary);
+    color: var(--color-text-muted);
   }
 
-  .delete-btn {
+  .delete-action {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
     background: transparent;
     border: none;
-    color: #888;
-    padding: 4px 8px;
-    font-size: 1rem;
+    border-radius: var(--radius-sm);
+    color: var(--color-text-muted);
     cursor: pointer;
+    transition: all var(--transition-fast);
+    padding: 0;
   }
 
-  .delete-btn:hover {
-    color: #f87171;
-    background: transparent;
+  .delete-action:hover {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--color-error);
   }
 
-  /* MonarchRT Generate Mode */
-  .mode-banner {
-    padding: 10px 16px;
-    border-radius: 8px;
-    font-size: 0.85rem;
-    font-weight: 500;
-  }
-
-  .generate-mode {
-    background: linear-gradient(135deg, #065f46, #064e3b);
-    color: #6ee7b7;
-    border: 1px solid #059669;
-  }
-
-  .generate-btn {
-    background: linear-gradient(135deg, #059669, #047857) !important;
-  }
-
-  .generate-btn:hover:not(:disabled) {
-    background: linear-gradient(135deg, #047857, #065f46) !important;
-  }
-
-  .video-grid.single {
-    grid-template-columns: 1fr;
-    max-width: 800px;
-    margin: 0 auto;
-  }
-
-  .video-box.wide {
-    background: #16213e;
-    border-radius: 12px;
-    padding: 16px;
-  }
-
-  .video-box.wide video {
-    width: 100%;
-    aspect-ratio: 16/9;
-    object-fit: contain;
-    border-radius: 8px;
-    background: #0f0f1a;
-  }
-
-  .video-box.wide .placeholder {
-    aspect-ratio: 16/9;
-  }
-
-  @media (max-width: 900px) {
-    .video-grid {
-      grid-template-columns: 1fr;
-    }
-
-    .control-row {
-      flex-direction: column;
-    }
+  .delete-action svg {
+    width: 14px;
+    height: 14px;
   }
 </style>

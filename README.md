@@ -25,6 +25,29 @@ Real-time video-to-video AI diffusion with [StreamDiffusion](https://github.com/
 
 ## Quick Start
 
+<!-- one-command-install -->
+> **One-command install** — clone, configure, and run in a single step:
+>
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/jasperan/draw-realtime/main/install.sh | bash
+> ```
+>
+> <details><summary>Advanced options</summary>
+>
+> Override install location:
+> ```bash
+> PROJECT_DIR=/opt/myapp curl -fsSL https://raw.githubusercontent.com/jasperan/draw-realtime/main/install.sh | bash
+> ```
+>
+> Or install manually:
+> ```bash
+> git clone https://github.com/jasperan/draw-realtime.git
+> cd draw-realtime
+> # See below for setup instructions
+> ```
+> </details>
+
+
 ### Prerequisites
 
 - NVIDIA GPU with CUDA support (RTX 2060+ recommended, 8GB+ VRAM)

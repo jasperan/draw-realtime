@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+import json
 import logging
 import mimetypes
 import os
@@ -35,6 +36,87 @@ mimetypes.add_type("application/javascript", ".js")
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _probe_video_metadata(video_path: Path) -> Optional[dict]:
+    """Return basic metadata for a valid video, or None for corrupt files."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=width,height",
+                "-show_entries", "format=duration",
+                "-of", "json",
+                str(video_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception:
+        return None
+
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+
+    streams = payload.get("streams") or []
+    if not streams:
+        return None
+
+    stream = streams[0]
+    width = int(stream.get("width") or 0)
+    height = int(stream.get("height") or 0)
+    duration_raw = (payload.get("format") or {}).get("duration")
+
+    if width <= 0 or height <= 0:
+        return None
+
+    try:
+        duration = float(duration_raw) if duration_raw is not None else 0.0
+    except (TypeError, ValueError):
+        duration = 0.0
+
+    return {"width": width, "height": height, "duration": duration}
+
+
+def _generate_video_thumbnail(video_path: Path, thumbnail_path: Path) -> bool:
+    """Generate a thumbnail from the first usable frame of a video."""
+    commands = (
+        [
+            "ffmpeg", "-y", "-i", str(video_path),
+            "-vf", "thumbnail,scale=320:-1",
+            "-frames:v", "1",
+            str(thumbnail_path),
+        ],
+        [
+            "ffmpeg", "-y", "-i", str(video_path),
+            "-vf", "scale=320:-1",
+            "-frames:v", "1",
+            str(thumbnail_path),
+        ],
+    )
+
+    for command in commands:
+        if thumbnail_path.exists():
+            thumbnail_path.unlink()
+        try:
+            result = subprocess.run(command, capture_output=True, timeout=10)
+        except Exception:
+            continue
+
+        if result.returncode == 0 and thumbnail_path.exists() and thumbnail_path.stat().st_size > 0:
+            return True
+
+    if thumbnail_path.exists() and thumbnail_path.stat().st_size == 0:
+        thumbnail_path.unlink()
+
+    return False
 
 
 # Request/Response models
@@ -387,31 +469,9 @@ class App:
                     if size_bytes < 1000:
                         continue
 
-                    # Get video metadata using ffprobe
-                    duration = 0
-                    width = 0
-                    height = 0
-                    try:
-                        result = subprocess.run(
-                            [
-                                "ffprobe", "-v", "error",
-                                "-select_streams", "v:0",
-                                "-show_entries", "stream=width,height,duration",
-                                "-of", "csv=p=0",
-                                str(filepath)
-                            ],
-                            capture_output=True,
-                            text=True,
-                            timeout=5
-                        )
-                        if result.returncode == 0 and result.stdout.strip():
-                            parts = result.stdout.strip().split(",")
-                            if len(parts) >= 3:
-                                width = int(parts[0]) if parts[0] else 0
-                                height = int(parts[1]) if parts[1] else 0
-                                duration = float(parts[2]) if parts[2] else 0
-                    except Exception:
-                        pass
+                    metadata = _probe_video_metadata(filepath)
+                    if metadata is None:
+                        continue
 
                     # Format size
                     if size_bytes >= 1024 * 1024:
@@ -423,9 +483,9 @@ class App:
                         "filename": filepath.name,
                         "size_bytes": size_bytes,
                         "size_human": size_human,
-                        "duration": round(duration, 2),
-                        "width": width,
-                        "height": height,
+                        "duration": round(metadata["duration"], 2),
+                        "width": metadata["width"],
+                        "height": metadata["height"],
                         "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
                         "thumbnail": f"/api/output-thumbnail/{filepath.name}"
                     })
@@ -458,22 +518,10 @@ class App:
 
             # Generate thumbnail if it doesn't exist or video is newer
             if not thumbnail_path.exists() or video_path.stat().st_mtime > thumbnail_path.stat().st_mtime:
-                try:
-                    subprocess.run(
-                        [
-                            "ffmpeg", "-y", "-i", str(video_path),
-                            "-ss", "1", "-vframes", "1",
-                            "-vf", "scale=320:-1",
-                            str(thumbnail_path)
-                        ],
-                        capture_output=True,
-                        timeout=10
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to generate thumbnail for {filename}: {e}")
-                    raise HTTPException(status_code=500, detail="Failed to generate thumbnail")
+                if not _generate_video_thumbnail(video_path, thumbnail_path):
+                    raise HTTPException(status_code=404, detail="Thumbnail not found")
 
-            if not thumbnail_path.exists():
+            if not thumbnail_path.exists() or thumbnail_path.stat().st_size == 0:
                 raise HTTPException(status_code=404, detail="Thumbnail not found")
 
             return FileResponse(

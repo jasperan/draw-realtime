@@ -260,6 +260,35 @@ class TestListOutputs:
         data = resp.json()
         assert "outputs" in data
 
+    def test_skips_invalid_outputs(self, client, mock_deps, create_dummy_video):
+        create_dummy_video("valid.mp4", directory=mock_deps["processor"].outputs_dir)
+        broken_path = mock_deps["processor"].outputs_dir / "broken.mp4"
+        broken_path.write_bytes(b"\x00" * 4096)
+
+        resp = client.get("/api/outputs")
+
+        assert resp.status_code == 200
+        filenames = {item["filename"] for item in resp.json()["outputs"]}
+        assert "valid.mp4" in filenames
+        assert "broken.mp4" not in filenames
+
+
+# ---------------------------------------------------------------------------
+# GET /api/output-thumbnail/{filename}
+# ---------------------------------------------------------------------------
+
+class TestGetOutputThumbnail:
+    def test_generates_thumbnail_for_short_video(self, client, mock_deps, create_dummy_video):
+        create_dummy_video("short.mp4", directory=mock_deps["processor"].outputs_dir)
+
+        resp = client.get("/api/output-thumbnail/short.mp4")
+
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "image/jpeg"
+        thumbnail_path = mock_deps["processor"].outputs_dir.parent / "thumbnails" / "short.jpg"
+        assert thumbnail_path.exists()
+        assert thumbnail_path.stat().st_size > 0
+
 
 # ---------------------------------------------------------------------------
 # DELETE /api/output/{filename}

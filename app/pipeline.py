@@ -17,6 +17,11 @@ from PIL import Image
 import torch
 import numpy as np
 
+from app.startup_hygiene import install_warning_filters, normalize_hf_telemetry_env
+
+normalize_hf_telemetry_env()
+install_warning_filters()
+
 # Add StreamDiffusion to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "StreamDiffusion"))
 

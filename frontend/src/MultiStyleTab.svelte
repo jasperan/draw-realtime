@@ -39,6 +39,8 @@
   let error = '';
   let pollInterval: number | null = null;
 
+  const blankCaptionTrack = 'data:text/vtt;charset=utf-8,WEBVTT%0A%0A';
+
   onMount(async () => {
     await loadStyles();
     await loadServerVideos();
@@ -176,10 +178,10 @@
 
   function getStatusText(status: string): string {
     switch (status) {
-      case 'pending': return 'Pending...';
-      case 'analyzing': return 'Analyzing with LLaVA...';
-      case 'generating': return 'Generating styles with FLUX...';
-      case 'creating_grid': return 'Creating comparison grid...';
+      case 'pending': return 'Pending…';
+      case 'analyzing': return 'Analyzing with LLaVA…';
+      case 'generating': return 'Generating styles with FLUX…';
+      case 'creating_grid': return 'Creating comparison grid…';
       case 'completed': return 'Complete!';
       case 'failed': return 'Failed';
       default: return status;
@@ -206,8 +208,10 @@
 
       <div class="input-options">
         <div class="option-group">
-          <label>Upload a video:</label>
+          <label for="multistyle-upload-input">Upload a video:</label>
           <input
+            id="multistyle-upload-input"
+            name="multistyleUpload"
             type="file"
             accept="video/*"
             on:change={handleFileUpload}
@@ -221,8 +225,8 @@
         <div class="divider">or</div>
 
         <div class="option-group">
-          <label>Choose from server:</label>
-          <select bind:value={selectedVideo} disabled={isProcessing} on:change={() => uploadedFile = ''}>
+          <label for="multistyle-server-select">Choose from server:</label>
+          <select id="multistyle-server-select" name="multistyleServerVideo" bind:value={selectedVideo} disabled={isProcessing} on:change={() => uploadedFile = ''}>
             <option value="">-- Select a video --</option>
             {#each serverVideos as video}
               <option value={video.name}>{video.name} ({video.duration}s)</option>
@@ -240,7 +244,9 @@
         {#if useCustomDescription}
           <textarea
             bind:value={customDescription}
-            placeholder="Describe what's happening in the video..."
+            name="customDescription"
+            aria-label="Custom video description"
+            placeholder="Describe what's happening in the video…"
             disabled={isProcessing}
             rows="3"
           ></textarea>
@@ -249,14 +255,15 @@
 
       <button
         class="start-btn"
+        type="button"
         on:click={startProcessing}
         disabled={isProcessing || (!selectedVideo && !uploadedFile)}
       >
-        {isProcessing ? 'Processing...' : 'Generate Styles'}
+        {isProcessing ? 'Processing…' : 'Generate Styles'}
       </button>
 
       {#if error}
-        <div class="error-message">{error}</div>
+        <div class="error-message" role="alert">{error}</div>
       {/if}
     </div>
 
@@ -320,7 +327,9 @@
               src={getOutputUrl(currentJob.job_id, output)}
               controls
               preload="metadata"
-            ></video>
+            >
+              <track kind="captions" srclang="en" label="Captions" src={blankCaptionTrack} />
+            </video>
             <div class="result-label">{getStyleDisplayName(styles[i]?.slug || '')}</div>
             <a
               href={getOutputUrl(currentJob.job_id, output)}
@@ -338,7 +347,9 @@
             src={getOutputUrl(currentJob.job_id, currentJob.grid_output)}
             controls
             class="grid-video"
-          ></video>
+          >
+            <track kind="captions" srclang="en" label="Captions" src={blankCaptionTrack} />
+          </video>
           <a
             href={getOutputUrl(currentJob.job_id, currentJob.grid_output)}
             download

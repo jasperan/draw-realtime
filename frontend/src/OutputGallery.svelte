@@ -20,6 +20,19 @@
   let selectedVideo: OutputVideo | null = null;
   let deleteConfirm: OutputVideo | null = null;
 
+  const blankCaptionTrack = 'data:text/vtt;charset=utf-8,WEBVTT%0A%0A';
+
+  function handleWindowKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Escape') return;
+    if (deleteConfirm) {
+      deleteConfirm = null;
+      return;
+    }
+    if (selectedVideo) {
+      selectedVideo = null;
+    }
+  }
+
   onMount(() => {
     loadOutputs();
   });
@@ -79,24 +92,29 @@
     });
 </script>
 
+<svelte:window on:keydown={handleWindowKeydown} />
+
 <div class="output-gallery">
   <div class="gallery-header">
     <h3>Output Library</h3>
     <div class="gallery-controls">
       <input
         type="text"
-        placeholder="Filter..."
+        name="outputFilter"
+        autocomplete="off"
+        placeholder="Filter…"
+        aria-label="Filter outputs"
         bind:value={filterText}
         class="filter-input"
       />
-      <select bind:value={sortBy} class="sort-select">
+      <select bind:value={sortBy} class="sort-select" name="outputSort" aria-label="Sort outputs">
         <option value="date">Newest First</option>
         <option value="name">Name</option>
         <option value="size">Size</option>
         <option value="duration">Duration</option>
       </select>
-      <button class="refresh-btn" on:click={loadOutputs} disabled={loading}>
-        {loading ? '...' : '↻'}
+      <button class="refresh-btn" on:click={loadOutputs} disabled={loading} type="button" aria-label="Refresh outputs" title="Refresh outputs">
+        {loading ? '…' : '↻'}
       </button>
     </div>
   </div>
@@ -104,7 +122,7 @@
   {#if error}
     <div class="error-message">{error}</div>
   {:else if loading}
-    <div class="loading">Loading outputs...</div>
+    <div class="loading" role="status" aria-live="polite">Loading outputs…</div>
   {:else if sortedOutputs.length === 0}
     <div class="empty-state">
       {filterText ? 'No videos match your filter' : 'No output videos yet'}
@@ -113,19 +131,24 @@
     <div class="video-grid">
       {#each sortedOutputs as video}
         <div class="video-card">
-          <div class="thumbnail-container" on:click={() => selectedVideo = video} on:keydown={(e) => e.key === 'Enter' && (selectedVideo = video)} role="button" tabindex="0">
+          <button
+            class="thumbnail-container"
+            type="button"
+            aria-label={`Preview ${video.filename}`}
+            on:click={() => selectedVideo = video}
+          >
             <img
               src={video.thumbnail}
               alt={video.filename}
               loading="lazy"
               on:error={(e) => e.currentTarget.style.display = 'none'}
             />
-            <div class="play-overlay">▶</div>
+            <div class="play-overlay" aria-hidden="true">▶</div>
             <div class="duration-badge">{formatDuration(video.duration)}</div>
-          </div>
+          </button>
           <div class="video-info">
             <div class="video-name" title={video.filename}>
-              {video.filename.length > 30 ? video.filename.slice(0, 27) + '...' : video.filename}
+              {video.filename.length > 30 ? video.filename.slice(0, 27) + '…' : video.filename}
             </div>
             <div class="video-meta">
               <span>{video.size_human}</span>
@@ -139,10 +162,13 @@
               download={video.filename}
               class="action-btn download-btn"
               title="Download"
+              aria-label={`Download ${video.filename}`}
             >↓</a>
             <button
               class="action-btn delete-btn"
+              type="button"
               title="Delete"
+              aria-label={`Delete ${video.filename}`}
               on:click|stopPropagation={() => deleteConfirm = video}
             >×</button>
           </div>
@@ -159,11 +185,12 @@
 
 <!-- Video Player Modal -->
 {#if selectedVideo}
-  <div class="modal-overlay" on:click={() => selectedVideo = null} on:keydown={(e) => e.key === 'Escape' && (selectedVideo = null)} role="dialog" tabindex="-1">
-    <div class="modal-content" on:click|stopPropagation on:keydown|stopPropagation>
+  <div class="modal-overlay">
+    <button class="modal-backdrop" type="button" tabindex="-1" aria-label="Close video preview" on:click={() => selectedVideo = null}></button>
+    <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="output-preview-title">
       <div class="modal-header">
-        <span class="modal-title">{selectedVideo.filename}</span>
-        <button class="modal-close" on:click={() => selectedVideo = null}>×</button>
+        <h4 class="modal-title" id="output-preview-title">{selectedVideo.filename}</h4>
+        <button class="modal-close" type="button" aria-label="Close video preview" on:click={() => selectedVideo = null}>×</button>
       </div>
       <video
         src={`/api/output/${encodeURIComponent(selectedVideo.filename)}`}
@@ -171,6 +198,7 @@
         autoplay
         class="modal-video"
       >
+        <track kind="captions" srclang="en" label="Captions" src={blankCaptionTrack} />
         Your browser does not support video playback.
       </video>
       <div class="modal-info">
@@ -185,16 +213,17 @@
 
 <!-- Delete Confirmation Modal -->
 {#if deleteConfirm}
-  <div class="modal-overlay" on:click={() => deleteConfirm = null} on:keydown={(e) => e.key === 'Escape' && (deleteConfirm = null)} role="dialog" tabindex="-1">
-    <div class="confirm-modal" on:click|stopPropagation on:keydown|stopPropagation>
-      <div class="confirm-title">Delete Video?</div>
+  <div class="modal-overlay">
+    <button class="modal-backdrop" type="button" tabindex="-1" aria-label="Close delete confirmation" on:click={() => deleteConfirm = null}></button>
+    <div class="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="delete-confirm-title">
+      <div class="confirm-title" id="delete-confirm-title">Delete Video?</div>
       <div class="confirm-message">
         Are you sure you want to delete<br/>
         <strong>{deleteConfirm.filename}</strong>?
       </div>
       <div class="confirm-actions">
-        <button class="cancel-btn" on:click={() => deleteConfirm = null}>Cancel</button>
-        <button class="delete-confirm-btn" on:click={() => { if (deleteConfirm) deleteVideo(deleteConfirm); }}>Delete</button>
+        <button class="cancel-btn" type="button" on:click={() => deleteConfirm = null}>Cancel</button>
+        <button class="delete-confirm-btn" type="button" on:click={() => { if (deleteConfirm) deleteVideo(deleteConfirm); }}>Delete</button>
       </div>
     </div>
   </div>
@@ -295,6 +324,11 @@
     background: #000;
     cursor: pointer;
     overflow: hidden;
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: none;
+    text-align: left;
   }
 
   .thumbnail-container img {
@@ -315,8 +349,21 @@
     text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
   }
 
-  .thumbnail-container:hover .play-overlay {
+  .thumbnail-container:hover .play-overlay,
+  .thumbnail-container:focus-visible .play-overlay {
     opacity: 1;
+  }
+
+  .thumbnail-container:focus-visible,
+  .refresh-btn:focus-visible,
+  .action-btn:focus-visible,
+  .modal-close:focus-visible,
+  .cancel-btn:focus-visible,
+  .delete-confirm-btn:focus-visible,
+  .filter-input:focus-visible,
+  .sort-select:focus-visible {
+    outline: 2px solid #6ea8ff;
+    outline-offset: 2px;
   }
 
   .duration-badge {
@@ -424,6 +471,16 @@
     padding: 20px;
   }
 
+  .modal-backdrop {
+    position: absolute;
+    inset: 0;
+    border: none;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+  }
+
   .modal-content {
     background: #16213e;
     border-radius: 12px;
@@ -432,6 +489,8 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    position: relative;
+    z-index: 1;
   }
 
   .modal-header {
@@ -449,6 +508,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     max-width: calc(100% - 40px);
+    margin: 0;
   }
 
   .modal-close {
@@ -486,6 +546,8 @@
     padding: 24px;
     text-align: center;
     max-width: 400px;
+    position: relative;
+    z-index: 1;
   }
 
   .confirm-title {

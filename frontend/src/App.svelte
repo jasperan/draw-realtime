@@ -47,6 +47,8 @@
   let previewTimestamp = 0;
   let lastPreviewFrame = -1;
 
+  const blankCaptionTrack = 'data:text/vtt;charset=utf-8,WEBVTT%0A%0A';
+
   // Format seconds to MM:SS
   function formatTime(seconds: number): string {
     if (!seconds || seconds <= 0) return '--:--';
@@ -398,38 +400,48 @@
   </header>
 
   <!-- Navigation Tabs -->
-  <nav class="tab-navigation" role="tablist">
-    <button 
-      class="tab-button" 
-      class:active={activeTab === 'processing'}
-      on:click={() => activeTab = 'processing'}
-      role="tab"
-      aria-selected={activeTab === 'processing'}
-    >
-      <span class="tab-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polygon points="5 3 19 12 5 21 5 3"/>
-        </svg>
-      </span>
-      <span class="tab-label">Video Processing</span>
-    </button>
-    <button 
-      class="tab-button" 
-      class:active={activeTab === 'multistyle'}
-      on:click={() => activeTab = 'multistyle'}
-      role="tab"
-      aria-selected={activeTab === 'multistyle'}
-    >
-      <span class="tab-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="3" width="7" height="7"/>
-          <rect x="14" y="3" width="7" height="7"/>
-          <rect x="14" y="14" width="7" height="7"/>
-          <rect x="3" y="14" width="7" height="7"/>
-        </svg>
-      </span>
-      <span class="tab-label">Multi-Style</span>
-    </button>
+  <nav aria-label="Workspace modes">
+    <div class="tab-navigation" role="tablist" aria-label="Workspace modes">
+      <button
+        id="processing-tab"
+        class="tab-button"
+        class:active={activeTab === 'processing'}
+        on:click={() => activeTab = 'processing'}
+        role="tab"
+        type="button"
+        aria-controls="processing-panel"
+        aria-selected={activeTab === 'processing'}
+        tabindex={activeTab === 'processing' ? 0 : -1}
+      >
+        <span class="tab-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <polygon points="5 3 19 12 5 21 5 3"/>
+          </svg>
+        </span>
+        <span class="tab-label">Video Processing</span>
+      </button>
+      <button
+        id="multistyle-tab"
+        class="tab-button"
+        class:active={activeTab === 'multistyle'}
+        on:click={() => activeTab = 'multistyle'}
+        role="tab"
+        type="button"
+        aria-controls="multistyle-panel"
+        aria-selected={activeTab === 'multistyle'}
+        tabindex={activeTab === 'multistyle' ? 0 : -1}
+      >
+        <span class="tab-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <rect x="3" y="3" width="7" height="7"/>
+            <rect x="14" y="3" width="7" height="7"/>
+            <rect x="14" y="14" width="7" height="7"/>
+            <rect x="3" y="14" width="7" height="7"/>
+          </svg>
+        </span>
+        <span class="tab-label">Multi-Style</span>
+      </button>
+    </div>
   </nav>
 
   {#if loadError}
@@ -440,9 +452,11 @@
   {/if}
 
   {#if activeTab === 'multistyle'}
-    <MultiStyleTab />
+    <div id="multistyle-panel" role="tabpanel" aria-labelledby="multistyle-tab">
+      <MultiStyleTab />
+    </div>
   {:else}
-    <div class="workspace">
+    <div class="workspace" id="processing-panel" role="tabpanel" aria-labelledby="processing-tab">
       <!-- Real-time Preview Panel -->
       {#if isProcessing && previewInputUrl && previewOutputUrl}
         <section class="preview-panel" aria-label="Real-time processing preview">
@@ -453,7 +467,7 @@
               Processing
             </div>
           </div>
-          
+
           <div class="comparison-view">
             <div class="frame-card">
               <span class="frame-label">Original</span>
@@ -461,13 +475,13 @@
                 <img src={previewInputUrl} alt="Original frame" loading="lazy"/>
               </div>
             </div>
-            
+
             <div class="transform-arrow">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M5 12h14M12 5l7 7-7 7"/>
               </svg>
             </div>
-            
+
             <div class="frame-card">
               <span class="frame-label">Generated</span>
               <div class="frame-image">
@@ -475,7 +489,7 @@
               </div>
             </div>
           </div>
-          
+
           <div class="progress-metrics">
             <div class="metric">
               <span class="metric-value">{currentJob?.current_frame || 0}</span>
@@ -494,7 +508,7 @@
             <div class="metric-spacer"></div>
             <div class="metric-progress">{(currentJob?.progress || 0).toFixed(1)}%</div>
           </div>
-          
+
           <div class="progress-track">
             <div class="progress-fill" style="width: {currentJob?.progress || 0}%"></div>
           </div>
@@ -518,7 +532,9 @@
                     controls
                     loop
                     playsinline
-                  ></video>
+                  >
+                    <track kind="captions" srclang="en" label="Captions" src={blankCaptionTrack} />
+                  </video>
                 {:else if isProcessing}
                   <div class="loading-state">
                     <div class="spinner-artistic">
@@ -526,7 +542,7 @@
                       <div class="spinner-ring"></div>
                       <div class="spinner-ring"></div>
                     </div>
-                    <p class="loading-text">Generating with MonarchRT...</p>
+                    <p class="loading-text">Generating with MonarchRT…</p>
                     <p class="loading-subtext">{(currentJob?.progress || 0).toFixed(1)}% complete</p>
                     {#if currentJob}
                       <div class="mini-progress">
@@ -571,7 +587,9 @@
                     on:play={handleInputPlay}
                     on:pause={handleInputPause}
                     on:seeked={handleInputSeek}
-                  ></video>
+                  >
+                    <track kind="captions" srclang="en" label="Captions" src={blankCaptionTrack} />
+                  </video>
                 {:else}
                   <div class="empty-state">
                     <div class="empty-icon">
@@ -607,14 +625,16 @@
                     on:play={handleOutputPlay}
                     on:pause={handleOutputPause}
                     on:seeked={handleOutputSeek}
-                  ></video>
+                  >
+                    <track kind="captions" srclang="en" label="Captions" src={blankCaptionTrack} />
+                  </video>
                 {:else if isProcessing}
                   <div class="loading-state">
                     <div class="spinner-artistic">
                       <div class="spinner-ring"></div>
                       <div class="spinner-ring"></div>
                     </div>
-                    <p class="loading-text">Transforming...</p>
+                    <p class="loading-text">Transforming…</p>
                     <p class="loading-subtext">See live preview above</p>
                   </div>
                 {:else}
@@ -684,13 +704,13 @@
 
         <div class="controls-grid">
           {#if !isGenerateMode}
-            <div class="control-group wide">
-              <label class="control-label">Video Source</label>
+            <fieldset class="control-group wide">
+              <legend class="control-label">Video Source</legend>
               <div class="source-controls">
                 <label class="upload-button">
-                  <input type="file" accept="video/*" on:change={handleFileUpload} />
+                  <input id="video-upload-input" name="videoUpload" type="file" accept="video/*" on:change={handleFileUpload} />
                   <span class="upload-content">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                       <polyline points="17 8 12 3 7 8"/>
                       <line x1="12" y1="3" x2="12" y2="15"/>
@@ -702,19 +722,22 @@
                 {#if serverVideos.length > 0}
                   <div class="select-wrapper">
                     <select
+                      id="video-library-select"
+                      name="videoLibrary"
                       value={selectedServerVideo}
+                      aria-label="Select video from library"
                       on:change={(e) => {
                         const video = serverVideos.find(v => v.name === e.currentTarget.value);
                         if (video) selectServerVideo(video);
                       }}
                     >
-                      <option value="">Select from library...</option>
+                      <option value="">Select from library…</option>
                       {#each serverVideos as video}
                         <option value={video.name}>{video.name} ({video.duration}s)</option>
                       {/each}
                     </select>
                     <span class="select-arrow">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                         <polyline points="6 9 12 15 18 9"/>
                       </svg>
                     </span>
@@ -724,38 +747,38 @@
 
               {#if uploadedFile}
                 <span class="selected-indicator">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                     <polyline points="20 6 9 17 4 12"/>
                   </svg>
                   {uploadedFile.original_name}
                 </span>
               {:else if selectedServerVideo}
                 <span class="selected-indicator">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                     <polyline points="20 6 9 17 4 12"/>
                   </svg>
                   {selectedServerVideo}
                 </span>
               {/if}
-            </div>
+            </fieldset>
           {/if}
 
           <div class="control-group">
-            <label class="control-label">AI Model</label>
+            <label class="control-label" for="model-select">AI Model</label>
             <div class="select-wrapper">
               {#if settings}
-                <select bind:value={selectedModel}>
+                <select id="model-select" name="model" bind:value={selectedModel}>
                   {#each Object.entries(settings.models) as [key, desc]}
                     <option value={key}>{desc}</option>
                   {/each}
                 </select>
               {:else}
-                <select disabled>
-                  <option>Loading models...</option>
+                <select id="model-select" name="model" disabled>
+                  <option>Loading models…</option>
                 </select>
               {/if}
               <span class="select-arrow">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                   <polyline points="6 9 12 15 18 9"/>
                 </svg>
               </span>
@@ -764,16 +787,16 @@
 
           {#if isGenerateMode}
             <div class="control-group">
-              <label class="control-label">Duration</label>
+              <label class="control-label" for="duration-select">Duration</label>
               <div class="select-wrapper">
-                <select bind:value={numFrames}>
+                <select id="duration-select" name="duration" bind:value={numFrames}>
                   <option value={21}>21 frames (~1.3s)</option>
                   <option value={41}>41 frames (~2.6s)</option>
                   <option value={61}>61 frames (~3.8s)</option>
                   <option value={81}>81 frames (~5s)</option>
                 </select>
                 <span class="select-arrow">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                     <polyline points="6 9 12 15 18 9"/>
                   </svg>
                 </span>
@@ -783,8 +806,8 @@
         </div>
 
         {#if !isGenerateMode}
-          <div class="control-group full">
-            <label class="control-label">Style Preset</label>
+          <fieldset class="control-group full">
+            <legend class="control-label">Style Preset</legend>
             <div class="preset-grid">
               {#if settings?.presets}
                 {#each Object.entries(settings.presets) as [key, preset]}
@@ -799,20 +822,23 @@
                 {/each}
               {/if}
             </div>
-          </div>
+          </fieldset>
         {/if}
 
         <div class="control-group full">
-          <label class="control-label">
+          <label class="control-label" for="prompt-input">
             {isGenerateMode ? 'Describe your video' : 'Transformation prompt'}
           </label>
           <input
+            id="prompt-input"
+            name="prompt"
             type="text"
             class="prompt-input"
             bind:value={prompt}
+            autocomplete="off"
             placeholder={isGenerateMode
-              ? 'A golden retriever running through wildflowers, cinematic lighting...'
-              : 'oil painting, vibrant colors, masterpiece quality...'}
+              ? 'A golden retriever running through wildflowers, cinematic lighting…'
+              : 'oil painting, vibrant colors, masterpiece quality…'}
           />
         </div>
 
@@ -821,10 +847,11 @@
           class:generate={isGenerateMode}
           on:click={startProcessing}
           disabled={isProcessing || (!isGenerateMode && !inputVideoUrl)}
+          type="button"
         >
           {#if isProcessing}
             <span class="btn-spinner"></span>
-            <span>{isGenerateMode ? 'Generating...' : 'Processing...'}</span>
+            <span>{isGenerateMode ? 'Generating…' : 'Processing…'}</span>
           {:else}
             <span>{isGenerateMode ? 'Generate Video' : 'Process Video'}</span>
           {/if}
@@ -861,8 +888,8 @@
                     <span class="status-badge pending">Queued</span>
                   {/if}
                   {#if job.status === 'completed' || job.status === 'failed'}
-                    <button 
-                      class="delete-action" 
+                    <button
+                      class="delete-action"
                       on:click={(e) => deleteJob(job, e)}
                       title="Delete job"
                       type="button"
@@ -995,6 +1022,16 @@
     background: var(--color-bg-hover);
   }
 
+  .tab-button:focus-visible,
+  .control-btn:focus-visible,
+  .preset-chip:focus-visible,
+  .action-button:focus-visible,
+  .select-wrapper select:focus-visible,
+  .prompt-input:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.9);
+    outline-offset: 2px;
+  }
+
   .tab-button.active {
     background: linear-gradient(135deg, var(--color-accent-primary), #f97316);
     color: white;
@@ -1010,7 +1047,7 @@
     .tab-button {
       padding: var(--space-sm) var(--space-lg);
     }
-    
+
     .tab-label {
       display: none;
     }
@@ -1123,7 +1160,7 @@
     .comparison-view {
       grid-template-columns: 1fr;
     }
-    
+
     .transform-arrow {
       transform: rotate(90deg);
     }
@@ -1510,7 +1547,7 @@
     .playback-bar {
       flex-wrap: wrap;
     }
-    
+
     .sync-toggle {
       margin-left: 0;
       padding-left: 0;
@@ -1570,6 +1607,13 @@
     gap: var(--space-sm);
   }
 
+  fieldset.control-group {
+    border: none;
+    padding: 0;
+    margin: 0;
+    min-width: 0;
+  }
+
   .control-group.wide {
     grid-column: span 1;
   }
@@ -1584,6 +1628,7 @@
     color: var(--color-text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.08em;
+    padding: 0;
   }
 
   .source-controls {
@@ -1619,7 +1664,8 @@
     transition: all var(--transition-fast);
   }
 
-  .upload-button:hover .upload-content {
+  .upload-button:hover .upload-content,
+  .upload-button:focus-within .upload-content {
     background: var(--color-bg-hover);
     border-color: var(--color-accent-primary);
     color: var(--color-accent-secondary);

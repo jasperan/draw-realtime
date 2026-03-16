@@ -69,12 +69,10 @@
   function handleTabKeydown(event: KeyboardEvent, currentTab: 'processing' | 'multistyle') {
     switch (event.key) {
       case 'ArrowRight':
-      case 'ArrowDown':
         event.preventDefault();
         activateTab(currentTab === 'processing' ? 'multistyle' : 'processing');
         break;
       case 'ArrowLeft':
-      case 'ArrowUp':
         event.preventDefault();
         activateTab(currentTab === 'processing' ? 'multistyle' : 'processing');
         break;

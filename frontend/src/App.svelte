@@ -5,6 +5,8 @@
 
   // Tab state
   let activeTab: 'processing' | 'multistyle' = 'processing';
+  let processingTabButton: HTMLButtonElement;
+  let multistyleTabButton: HTMLButtonElement;
 
   // State
   let settings: any = null;
@@ -48,6 +50,49 @@
   let lastPreviewFrame = -1;
 
   const blankCaptionTrack = 'data:text/vtt;charset=utf-8,WEBVTT%0A%0A';
+
+  function focusTab(tab: 'processing' | 'multistyle') {
+    if (tab === 'processing') {
+      processingTabButton?.focus();
+      return;
+    }
+    multistyleTabButton?.focus();
+  }
+
+  function activateTab(tab: 'processing' | 'multistyle', shouldFocus = true) {
+    activeTab = tab;
+    if (shouldFocus) {
+      focusTab(tab);
+    }
+  }
+
+  function handleTabKeydown(event: KeyboardEvent, currentTab: 'processing' | 'multistyle') {
+    switch (event.key) {
+      case 'ArrowRight':
+      case 'ArrowDown':
+        event.preventDefault();
+        activateTab(currentTab === 'processing' ? 'multistyle' : 'processing');
+        break;
+      case 'ArrowLeft':
+      case 'ArrowUp':
+        event.preventDefault();
+        activateTab(currentTab === 'processing' ? 'multistyle' : 'processing');
+        break;
+      case 'Home':
+        event.preventDefault();
+        activateTab('processing');
+        break;
+      case 'End':
+        event.preventDefault();
+        activateTab('multistyle');
+        break;
+      case 'Enter':
+      case ' ':
+        event.preventDefault();
+        activateTab(currentTab);
+        break;
+    }
+  }
 
   // Format seconds to MM:SS
   function formatTime(seconds: number): string {
@@ -403,10 +448,12 @@
   <nav aria-label="Workspace modes">
     <div class="tab-navigation" role="tablist" aria-label="Workspace modes">
       <button
+        bind:this={processingTabButton}
         id="processing-tab"
         class="tab-button"
         class:active={activeTab === 'processing'}
-        on:click={() => activeTab = 'processing'}
+        on:click={() => activateTab('processing', false)}
+        on:keydown={(event) => handleTabKeydown(event, 'processing')}
         role="tab"
         type="button"
         aria-controls="processing-panel"
@@ -421,10 +468,12 @@
         <span class="tab-label">Video Processing</span>
       </button>
       <button
+        bind:this={multistyleTabButton}
         id="multistyle-tab"
         class="tab-button"
         class:active={activeTab === 'multistyle'}
-        on:click={() => activeTab = 'multistyle'}
+        on:click={() => activateTab('multistyle', false)}
+        on:keydown={(event) => handleTabKeydown(event, 'multistyle')}
         role="tab"
         type="button"
         aria-controls="multistyle-panel"
@@ -698,7 +747,7 @@
                 <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
               </svg>
             </span>
-            <span class="mode-text">MonarchRT Text-to-Video Mode — Generate video from text prompts</span>
+            <span class="mode-text">MonarchRT Text-to-Video Mode: Generate video from text prompts</span>
           </div>
         {/if}
 

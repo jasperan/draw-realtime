@@ -168,13 +168,15 @@ node_modules/
 # Frontend build output
 frontend/build/
 
-# Claude Code files
+# Local agent / assistant files
 .claude/
-CLAUDE.md
 .claudeignore
-
-# Serena MCP files
 .serena/
+.pi/
+.agents/
+.crush/
+.openhands/
+CLAUDE.md
 
 # Design docs and planning files (local only)
 docs/plans/

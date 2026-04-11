@@ -2,9 +2,12 @@
 
 import asyncio
 import base64
+import json
 import os
 import subprocess
 import time
+import urllib.error
+import urllib.request
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
@@ -15,6 +18,44 @@ import numpy as np
 from PIL import Image
 
 from app.config import config
+from app.pipeline import pipeline_lock
+
+_FLUX_PIPELINE_TYPES = {"flux", "flux-quantized", "flux-4bit"}
+
+# Ollama HTTP API. The CLI doesn't accept image attachments — the old
+# `ollama run llava` + `[img]...[/img]` stdin trick was a no-op that
+# silently fell back to the "A video scene" default on every call.
+OLLAMA_BASE_URL = os.getenv("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+
+
+def _ollama_generate(
+    model: str,
+    prompt: str,
+    images: Optional[List[str]] = None,
+    timeout: int = 60,
+) -> Optional[str]:
+    """POST to Ollama's /api/generate and return the text response.
+
+    Returns None on any transport, HTTP, or decode failure (callers then
+    fall back to text-only handling).
+    """
+    payload: Dict = {"model": model, "prompt": prompt, "stream": False}
+    if images:
+        payload["images"] = images
+    try:
+        req = urllib.request.Request(
+            f"{OLLAMA_BASE_URL}/api/generate",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, json.JSONDecodeError, TimeoutError, OSError) as e:
+        print(f"Ollama API error ({model}): {e}")
+        return None
+    text = (data.get("response") or "").strip()
+    return text or None
 
 
 class MultiStyleStatus(str, Enum):
@@ -146,70 +187,50 @@ class MultiStyleProcessor:
         return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
     def analyze_video_with_llava(self, video_path: str) -> str:
-        """Analyze video frames with LLaVA via Ollama."""
+        """Analyze video frames with LLaVA via Ollama's HTTP API."""
         frames = self._sample_frames(video_path, num_frames=5)
 
-        descriptions = []
-        for i, frame in enumerate(frames):
-            # Resize frame for LLaVA (smaller = faster)
-            frame_resized = frame.copy()
-            frame_resized.thumbnail((512, 512))
+        prompt = (
+            "Describe what you see in this image in one sentence. "
+            "Focus on the main subject, action, and setting."
+        )
 
-            # Convert to base64
+        descriptions: List[str] = []
+        for i, frame in enumerate(frames):
+            frame_resized = frame.copy()
+            frame_resized.thumbnail((512, 512))  # smaller = faster
             img_base64 = self._image_to_base64(frame_resized)
 
-            # Call Ollama LLaVA
-            prompt = "Describe what you see in this image in one sentence. Focus on the main subject, action, and setting."
-
-            try:
-                result = subprocess.run(
-                    ["ollama", "run", "llava", prompt],
-                    input=f"[img]{img_base64}[/img]",
-                    capture_output=True,
-                    text=True,
-                    timeout=60
-                )
-                if result.returncode == 0 and result.stdout.strip():
-                    descriptions.append(result.stdout.strip())
-            except subprocess.TimeoutExpired:
-                print(f"LLaVA timeout on frame {i}")
-            except Exception as e:
-                print(f"LLaVA error on frame {i}: {e}")
+            description = _ollama_generate("llava", prompt, images=[img_base64], timeout=60)
+            if description:
+                descriptions.append(description)
+            else:
+                print(f"LLaVA returned no description for frame {i}")
 
         if not descriptions:
             return "A video scene"
-
-        # Combine descriptions into a coherent summary
         if len(descriptions) == 1:
             return descriptions[0]
 
-        # Use Ollama to combine multiple frame descriptions
-        combined_prompt = f"""Combine these frame descriptions into one coherent sentence describing the video:
-{chr(10).join(f'- {d}' for d in descriptions)}
+        # Use a text model to merge frame descriptions into a single line.
+        combined_prompt = (
+            "Combine these frame descriptions into one coherent sentence "
+            "describing the video:\n"
+            + "\n".join(f"- {d}" for d in descriptions)
+            + "\n\nProvide only the combined description, no other text."
+        )
+        merged = _ollama_generate("llama3.2", combined_prompt, timeout=30)
+        if merged:
+            return merged
 
-Provide only the combined description, no other text."""
-
-        try:
-            result = subprocess.run(
-                ["ollama", "run", "llama3.2"],
-                input=combined_prompt,
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                return result.stdout.strip()
-        except Exception as e:
-            print(f"Failed to combine descriptions: {e}")
-
-        # Fallback: just use the middle description
+        # Fallback: pick the middle frame's description.
         return descriptions[len(descriptions) // 2]
 
     def _build_prompt(self, description: str, style_desc: str) -> str:
         """Build the FLUX prompt from description and style."""
         return f"{description}, detailed, vibrant colors, {style_desc}"
 
-    async def generate_style_video(
+    def generate_style_video(
         self,
         job: MultiStyleJob,
         pipeline,
@@ -217,7 +238,8 @@ Provide only the combined description, no other text."""
         style_desc: str,
         style_index: int,
     ) -> Optional[str]:
-        """Generate a single style variant of the video."""
+        """Generate a single style variant of the video. Blocking — called
+        from the worker thread inside process_job."""
         job.current_style_index = style_index
         job.current_style_name = style_slug
         job.style_progress = 0.0
@@ -225,74 +247,74 @@ Provide only the combined description, no other text."""
         prompt = self._build_prompt(job.description, style_desc)
         print(f"[{style_index + 1}/{len(STYLES)}] Generating {style_slug}: {prompt[:60]}...")
 
-        # Ensure FLUX model is loaded
-        if pipeline.current_pipeline_type != "flux":
-            pipeline.load_model("flux-klein")
+        # Ensure a FLUX model is loaded. Check every flux variant — the
+        # old code compared only against "flux" and used a nonexistent
+        # "flux-klein" key, so it silently no-op'd (or worse, tried and
+        # failed) whenever the pipeline was on flux-quantized/flux-4bit.
+        if pipeline.current_pipeline_type not in _FLUX_PIPELINE_TYPES:
+            pipeline.load_model("flux2-klein")
 
         pipeline.update_prompt(prompt)
 
-        # Output path for this style
         input_name = Path(job.input_path).stem
         output_filename = f"{input_name}_{style_slug}.mp4"
         output_path = str(Path(job.output_dir) / output_filename)
 
-        # Open input video
         cap = cv2.VideoCapture(job.input_path)
         if not cap.isOpened():
             raise ValueError(f"Cannot open video: {job.input_path}")
 
-        # Get output resolution from pipeline
         out_w, out_h = pipeline.get_output_resolution()
-
-        # Create video writer
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(output_path, fourcc, job.fps, (out_w, out_h))
 
         frame_idx = 0
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
+        try:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
 
-            # Convert BGR to RGB
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            pil_image = Image.fromarray(frame_rgb)
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                pil_image = Image.fromarray(frame_rgb)
 
-            # Process through pipeline
-            output_image = pipeline.predict(pil_image)
+                output_image = pipeline.predict(pil_image)
 
-            if output_image is not None:
-                output_array = np.array(output_image)
-                output_bgr = cv2.cvtColor(output_array, cv2.COLOR_RGB2BGR)
-                out.write(output_bgr)
+                if output_image is not None:
+                    output_array = np.array(output_image)
+                    output_bgr = cv2.cvtColor(output_array, cv2.COLOR_RGB2BGR)
+                    out.write(output_bgr)
 
-            frame_idx += 1
-            job.style_progress = (frame_idx / job.total_frames) * 100
+                frame_idx += 1
+                # Guard against total_frames == 0 (VFR / stream errors).
+                job.style_progress = (frame_idx / max(1, job.total_frames)) * 100
+                base_progress = (style_index / len(STYLES)) * 100
+                style_contribution = (job.style_progress / 100) * (100 / len(STYLES))
+                job.overall_progress = base_progress + style_contribution
+        finally:
+            cap.release()
+            out.release()
 
-            # Calculate overall progress
-            base_progress = (style_index / len(STYLES)) * 100
-            style_contribution = (job.style_progress / 100) * (100 / len(STYLES))
-            job.overall_progress = base_progress + style_contribution
-
-            # Yield control
-            if frame_idx % 5 == 0:
-                await asyncio.sleep(0)
-
-        cap.release()
-        out.release()
-
-        # Re-encode with H.264 for browser compatibility
+        # Re-encode to H.264 for browser compatibility. Atomic swap via
+        # os.replace so a failed re-encode leaves the original intact.
         final_path = output_path.replace('.mp4', '_h264.mp4')
         result = subprocess.run([
             'ffmpeg', '-y', '-i', output_path,
             '-c:v', 'libx264', '-preset', 'fast',
             '-crf', '23', '-pix_fmt', 'yuv420p',
-            final_path
+            final_path,
         ], capture_output=True, text=True)
 
         if result.returncode == 0:
-            os.remove(output_path)
-            os.rename(final_path, output_path)
+            try:
+                os.replace(final_path, output_path)
+            except OSError:
+                pass
+        else:
+            try:
+                os.remove(final_path)
+            except OSError:
+                pass
 
         return output_path
 
@@ -346,49 +368,56 @@ Provide only the combined description, no other text."""
             return None
 
     async def process_job(self, job_id: str, pipeline) -> bool:
-        """Process a complete multi-style job."""
+        """Async entry point. Dispatches the blocking body to a worker
+        thread so the event loop stays responsive to status polling."""
         job = self.jobs.get(job_id)
         if not job:
             return False
+        return await asyncio.to_thread(self._process_job_sync, job, pipeline)
 
+    def _process_job_sync(self, job: MultiStyleJob, pipeline) -> bool:
+        """Blocking body of process_job. Runs in a worker thread, holds
+        pipeline_lock for the entire run so concurrent video-to-video
+        jobs can't swap the FLUX model out mid-stream."""
         job.started_at = time.time()
 
-        try:
-            # Phase 1: Analyze with LLaVA
-            job.status = MultiStyleStatus.ANALYZING
-            print(f"Analyzing video with LLaVA...")
-            job.description = self.analyze_video_with_llava(job.input_path)
-            print(f"Description: {job.description}")
+        with pipeline_lock():
+            try:
+                # Phase 1: Describe the video with LLaVA.
+                job.status = MultiStyleStatus.ANALYZING
+                print("Analyzing video with LLaVA...")
+                job.description = self.analyze_video_with_llava(job.input_path)
+                print(f"Description: {job.description}")
 
-            # Phase 2: Generate each style
-            job.status = MultiStyleStatus.GENERATING
-            for i, (style_slug, style_desc) in enumerate(STYLES):
-                output_path = await self.generate_style_video(
-                    job, pipeline, style_slug, style_desc, i
-                )
-                if output_path:
-                    job.completed_outputs.append(output_path)
-                    print(f"  Completed: {os.path.basename(output_path)}")
+                # Phase 2: Render every style.
+                job.status = MultiStyleStatus.GENERATING
+                for i, (style_slug, style_desc) in enumerate(STYLES):
+                    output_path = self.generate_style_video(
+                        job, pipeline, style_slug, style_desc, i,
+                    )
+                    if output_path:
+                        job.completed_outputs.append(output_path)
+                        print(f"  Completed: {os.path.basename(output_path)}")
 
-            # Phase 3: Create comparison grid
-            grid_path = self.create_comparison_grid(job)
-            if grid_path:
-                job.grid_output = grid_path
-                print(f"Grid created: {os.path.basename(grid_path)}")
+                # Phase 3: Build the comparison grid.
+                grid_path = self.create_comparison_grid(job)
+                if grid_path:
+                    job.grid_output = grid_path
+                    print(f"Grid created: {os.path.basename(grid_path)}")
 
-            job.status = MultiStyleStatus.COMPLETED
-            job.completed_at = time.time()
-            job.overall_progress = 100.0
-            return True
+                job.status = MultiStyleStatus.COMPLETED
+                job.completed_at = time.time()
+                job.overall_progress = 100.0
+                return True
 
-        except Exception as e:
-            job.status = MultiStyleStatus.FAILED
-            job.error = str(e)
-            job.completed_at = time.time()
-            print(f"Multi-style processing error: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
+            except Exception as e:
+                job.status = MultiStyleStatus.FAILED
+                job.error = str(e)
+                job.completed_at = time.time()
+                print(f"Multi-style processing error: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
 
     def get_job(self, job_id: str) -> Optional[MultiStyleJob]:
         """Get a job by ID."""

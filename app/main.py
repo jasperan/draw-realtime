@@ -4,7 +4,6 @@ import json
 import logging
 import mimetypes
 import os
-import shutil
 import subprocess
 import uuid
 from datetime import datetime
@@ -31,6 +30,37 @@ mimetypes.add_type("application/javascript", ".js")
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Upload stream chunk size: 1 MB. Small enough to bail fast on oversize uploads,
+# large enough not to dominate per-request latency.
+_UPLOAD_CHUNK_SIZE = 1024 * 1024
+MAX_UPLOAD_SIZE = 500 * 1024 * 1024  # 500 MB
+
+
+def _safe_path(base_dir: Path, filename: str) -> Path:
+    """Validate `filename` and return its absolute path under `base_dir`.
+
+    Rejects path separators, parent references, and NUL bytes up front
+    (cheap check that matches existing test expectations), then verifies
+    the resolved path is actually contained in base_dir (defense against
+    symlink tricks and edge-case OS quirks).
+    """
+    if (
+        not filename
+        or ".." in filename
+        or "/" in filename
+        or "\\" in filename
+        or "\x00" in filename
+    ):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    try:
+        base_resolved = Path(base_dir).resolve()
+        candidate = (base_resolved / filename).resolve()
+        candidate.relative_to(base_resolved)
+    except (ValueError, OSError):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    return candidate
 
 
 def _probe_video_metadata(video_path: Path) -> Optional[dict]:
@@ -153,10 +183,12 @@ class App:
 
     def _setup_middleware(self):
         """Configure CORS middleware."""
+        # Per CORS spec, wildcard origins + credentials is invalid and browsers
+        # will drop the credentials header anyway. Don't pretend we support
+        # credentialed cross-origin requests when we don't.
         self.app.add_middleware(
             CORSMiddleware,
             allow_origins=["*"],
-            allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
         )
@@ -192,8 +224,6 @@ class App:
         @self.app.post("/api/upload")
         async def upload_video(file: UploadFile = File(...)):
             """Upload a video file for processing."""
-            MAX_UPLOAD_SIZE = 500 * 1024 * 1024  # 500 MB
-
             processor = get_processor()
 
             # Validate file type
@@ -205,30 +235,50 @@ class App:
             if ext not in allowed_extensions:
                 raise HTTPException(status_code=400, detail=f"Invalid file type. Allowed: {allowed_extensions}")
 
-            # Save uploaded file
+            # Build target path with a UUID prefix so user-supplied filenames
+            # can never collide or escape the uploads dir.
             upload_id = str(uuid.uuid4())[:8]
-            safe_filename = f"{upload_id}_{file.filename}"
+            sanitized_name = Path(file.filename).name  # strip any path components
+            safe_filename = f"{upload_id}_{sanitized_name}"
             upload_path = processor.uploads_dir / safe_filename
 
+            # Stream to disk in chunks and bail as soon as we exceed the size
+            # limit. Previous implementation wrote the full upload first and
+            # then checked the size, which let attackers fill the disk.
+            bytes_written = 0
             try:
-                with open(upload_path, "wb") as buffer:
-                    shutil.copyfileobj(file.file, buffer)
-            finally:
-                file.file.close()
-
-            # Enforce file size limit
-            file_size = upload_path.stat().st_size
-            if file_size > MAX_UPLOAD_SIZE:
-                os.remove(upload_path)
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"File too large ({file_size / (1024*1024):.0f} MB). Maximum: {MAX_UPLOAD_SIZE / (1024*1024):.0f} MB",
-                )
+                try:
+                    with open(upload_path, "wb") as buffer:
+                        while True:
+                            chunk = await file.read(_UPLOAD_CHUNK_SIZE)
+                            if not chunk:
+                                break
+                            bytes_written += len(chunk)
+                            if bytes_written > MAX_UPLOAD_SIZE:
+                                raise HTTPException(
+                                    status_code=413,
+                                    detail=(
+                                        f"File too large. Maximum: "
+                                        f"{MAX_UPLOAD_SIZE // (1024 * 1024)} MB"
+                                    ),
+                                )
+                            buffer.write(chunk)
+                finally:
+                    await file.close()
+            except HTTPException:
+                try:
+                    upload_path.unlink()
+                except OSError:
+                    pass
+                raise
 
             # Get video info
             cap = cv2.VideoCapture(str(upload_path))
             if not cap.isOpened():
-                os.remove(upload_path)
+                try:
+                    upload_path.unlink()
+                except OSError:
+                    pass
                 raise HTTPException(status_code=400, detail="Could not read video file")
 
             fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
@@ -354,12 +404,7 @@ class App:
         async def get_output_video(filename: str):
             """Serve a processed output video."""
             processor = get_processor()
-
-            # Security: validate filename
-            if ".." in filename or "/" in filename or "\\" in filename:
-                raise HTTPException(status_code=400, detail="Invalid filename")
-
-            output_path = processor.outputs_dir / filename
+            output_path = _safe_path(processor.outputs_dir, filename)
             if not output_path.exists():
                 raise HTTPException(status_code=404, detail="Output not found")
 
@@ -373,13 +418,7 @@ class App:
         async def get_input_video(filename: str):
             """Serve an input video (from uploads or videos dir)."""
             processor = get_processor()
-
-            # Security: validate filename
-            if ".." in filename or "/" in filename or "\\" in filename:
-                raise HTTPException(status_code=400, detail="Invalid filename")
-
-            # Check uploads dir first
-            upload_path = processor.uploads_dir / filename
+            upload_path = _safe_path(processor.uploads_dir, filename)
             if upload_path.exists():
                 return FileResponse(
                     path=str(upload_path),
@@ -387,7 +426,7 @@ class App:
                     filename=filename,
                 )
 
-            # Check videos dir
+            # Check videos dir (get_video_path already validates containment).
             video_path = get_video_path(filename)
             if video_path:
                 return FileResponse(
@@ -406,45 +445,41 @@ class App:
             if not job:
                 raise HTTPException(status_code=404, detail="Job not found")
 
-            # Remove output file if exists
-            if os.path.exists(job.output_path):
-                os.remove(job.output_path)
+            # Best-effort cleanup of files on disk. Missing files are fine.
+            for path in (
+                job.output_path,
+                str(processor.preview_dir / f"{job_id}_input.jpg"),
+                str(processor.preview_dir / f"{job_id}_output.jpg"),
+            ):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
 
-            # Remove preview files
-            input_preview = processor.preview_dir / f"{job_id}_input.jpg"
-            output_preview = processor.preview_dir / f"{job_id}_output.jpg"
-            if input_preview.exists():
-                os.remove(input_preview)
-            if output_preview.exists():
-                os.remove(output_preview)
-
-            del processor.jobs[job_id]
+            processor.delete_job(job_id)
             return JSONResponse({"status": "deleted"})
 
         @self.app.get("/api/preview/{filename}")
         async def get_preview_frame(filename: str):
             """Serve a preview frame image for real-time visualization."""
             processor = get_processor()
-
-            # Security: validate filename
-            if ".." in filename or "/" in filename or "\\" in filename:
-                raise HTTPException(status_code=400, detail="Invalid filename")
-
-            preview_path = processor.preview_dir / filename
+            preview_path = _safe_path(processor.preview_dir, filename)
             if not preview_path.exists():
                 raise HTTPException(status_code=404, detail="Preview not found")
 
-            # Read file into memory to avoid Content-Length mismatch when file is being updated
+            # Read file into memory to avoid Content-Length mismatch when
+            # the file is being concurrently rewritten by the worker.
             try:
                 with open(preview_path, "rb") as f:
                     content = f.read()
-                return Response(
-                    content=content,
-                    media_type="image/jpeg",
-                    headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
-                )
-            except Exception:
+            except OSError:
                 raise HTTPException(status_code=404, detail="Preview not found")
+
+            return Response(
+                content=content,
+                media_type="image/jpeg",
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+            )
 
         @self.app.get("/api/outputs")
         async def list_outputs():
@@ -496,22 +531,16 @@ class App:
         async def get_output_thumbnail(filename: str):
             """Get or generate a thumbnail for an output video."""
             processor = get_processor()
-
-            # Security: validate filename
-            if ".." in filename or "/" in filename or "\\" in filename:
-                raise HTTPException(status_code=400, detail="Invalid filename")
-
-            video_path = processor.outputs_dir / filename
+            video_path = _safe_path(processor.outputs_dir, filename)
             if not video_path.exists():
                 raise HTTPException(status_code=404, detail="Video not found")
 
-            # Thumbnail path
             thumbnails_dir = processor.outputs_dir.parent / "thumbnails"
             thumbnails_dir.mkdir(exist_ok=True)
             thumbnail_name = filename.rsplit(".", 1)[0] + ".jpg"
             thumbnail_path = thumbnails_dir / thumbnail_name
 
-            # Generate thumbnail if it doesn't exist or video is newer
+            # Regenerate if missing or the video is newer than the thumbnail.
             if not thumbnail_path.exists() or video_path.stat().st_mtime > thumbnail_path.stat().st_mtime:
                 if not _generate_video_thumbnail(video_path, thumbnail_path):
                     raise HTTPException(status_code=404, detail="Thumbnail not found")
@@ -529,24 +558,19 @@ class App:
         async def delete_output(filename: str):
             """Delete an output video file."""
             processor = get_processor()
-
-            # Security: validate filename
-            if ".." in filename or "/" in filename or "\\" in filename:
-                raise HTTPException(status_code=400, detail="Invalid filename")
-
-            video_path = processor.outputs_dir / filename
+            video_path = _safe_path(processor.outputs_dir, filename)
             if not video_path.exists():
                 raise HTTPException(status_code=404, detail="Output not found")
 
-            # Delete video
             os.remove(video_path)
 
-            # Delete thumbnail if exists
             thumbnails_dir = processor.outputs_dir.parent / "thumbnails"
             thumbnail_name = filename.rsplit(".", 1)[0] + ".jpg"
             thumbnail_path = thumbnails_dir / thumbnail_name
-            if thumbnail_path.exists():
+            try:
                 os.remove(thumbnail_path)
+            except OSError:
+                pass
 
             return JSONResponse({"status": "deleted", "filename": filename})
 
@@ -618,14 +642,8 @@ class App:
         async def get_multistyle_output(job_id: str, filename: str):
             """Serve a multi-style output video."""
             multistyle = get_multistyle_processor()
-
-            # Security: validate inputs
-            if ".." in job_id or "/" in job_id or "\\" in job_id:
-                raise HTTPException(status_code=400, detail="Invalid job ID")
-            if ".." in filename or "/" in filename or "\\" in filename:
-                raise HTTPException(status_code=400, detail="Invalid filename")
-
-            output_path = multistyle.multistyle_dir / job_id / filename
+            job_dir = _safe_path(multistyle.multistyle_dir, job_id)
+            output_path = _safe_path(job_dir, filename)
             if not output_path.exists():
                 raise HTTPException(status_code=404, detail="Output not found")
 

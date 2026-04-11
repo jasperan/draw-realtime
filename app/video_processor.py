@@ -14,6 +14,7 @@ import numpy as np
 from PIL import Image
 
 from app.config import config
+from app.pipeline import pipeline_lock
 
 
 class JobStatus(str, Enum):
@@ -81,6 +82,37 @@ class VideoProcessor:
         self.uploads_dir.mkdir(parents=True, exist_ok=True)
         self.preview_dir.mkdir(parents=True, exist_ok=True)
 
+    def _reencode_to_h264(self, source_path: str) -> bool:
+        """Re-encode an mp4 in place to H.264 for browser compatibility.
+
+        Writes to a sibling file, then atomically swaps it in. Returns
+        False and leaves the original intact if ffmpeg fails.
+        """
+        final_path = source_path.replace('.mp4', '_h264.mp4')
+        result = subprocess.run([
+            'ffmpeg', '-y', '-i', source_path,
+            '-c:v', 'libx264', '-preset', 'fast',
+            '-crf', '23', '-pix_fmt', 'yuv420p',
+            final_path,
+        ], capture_output=True, text=True)
+
+        if result.returncode != 0:
+            try:
+                os.remove(final_path)
+            except OSError:
+                pass
+            return False
+
+        try:
+            os.replace(final_path, source_path)  # atomic on POSIX + Windows
+        except OSError:
+            return False
+        return True
+
+    def delete_job(self, job_id: str) -> bool:
+        """Remove a job from the registry. Returns True if removed."""
+        return self.jobs.pop(job_id, None) is not None
+
     def create_job(
         self,
         input_path: str,
@@ -88,6 +120,7 @@ class VideoProcessor:
         model: str,
     ) -> ProcessingJob:
         """Create a new processing job."""
+        self.cleanup_old_jobs()  # Opportunistic trim to bound memory growth.
         job_id = str(uuid.uuid4())[:8]
 
         # Create output filename
@@ -128,6 +161,7 @@ class VideoProcessor:
 
         Unlike create_job(), this does not require an input video.
         """
+        self.cleanup_old_jobs()
         job_id = str(uuid.uuid4())[:8]
 
         output_filename = f"generated_{job_id}_output.mp4"
@@ -147,265 +181,224 @@ class VideoProcessor:
         return job
 
     async def process_generate_job(self, job_id: str, pipeline) -> bool:
-        """Process a MonarchRT text-to-video generation job."""
+        """Async entry point for a MonarchRT text-to-video job.
+
+        Runs the blocking body (CUDA inference, cv2, ffmpeg) inside
+        asyncio.to_thread so the FastAPI event loop stays responsive for
+        status polling and new uploads while a job is in flight.
+        """
         job = self.jobs.get(job_id)
         if not job:
             return False
+        return await asyncio.to_thread(self._process_generate_job_sync, job, pipeline)
 
+    def _process_generate_job_sync(self, job: "ProcessingJob", pipeline) -> bool:
+        """Blocking body of process_generate_job. Runs in a worker thread.
+
+        Holds pipeline_lock for the entire run so concurrent jobs can't
+        swap the loaded model out from under us.
+        """
         job.status = JobStatus.PROCESSING
         job.started_at = time.time()
 
-        try:
-            # Check/update model
-            if job.model != pipeline.get_current_model():
-                pipeline.load_model(job.model)
-
-            # Update prompt
-            pipeline.update_prompt(job.prompt)
-
-            from app.config import MODELS
-            model_config = MODELS.get(job.model)
-            num_frames = model_config.num_output_frames if model_config else job.total_frames
-            out_w = model_config.width if model_config and model_config.width else 832
-            out_h = model_config.height if model_config and model_config.height else 480
-
-            job.total_frames = num_frames
-            job.progress = 5.0  # Show initial progress
-
-            # Yield control before heavy computation
-            await asyncio.sleep(0)
-
-            # Generate video frames (this is a single batch operation)
-            frames = pipeline.generate_video(
-                prompt=job.prompt,
-                num_frames=num_frames,
-                width=out_w,
-                height=out_h,
-            )
-
-            if not frames:
-                raise ValueError("MonarchRT generation returned no frames")
-
-            job.progress = 70.0
-            await asyncio.sleep(0)
-
-            # Write frames to video file
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            out = cv2.VideoWriter(
-                job.output_path,
-                fourcc,
-                job.fps,
-                (out_w, out_h),
-            )
-
-            for i, frame in enumerate(frames):
-                output_array = np.array(frame)
-                output_bgr = cv2.cvtColor(output_array, cv2.COLOR_RGB2BGR)
-
-                # Resize if needed
-                h, w = output_bgr.shape[:2]
-                if w != out_w or h != out_h:
-                    output_bgr = cv2.resize(output_bgr, (out_w, out_h))
-
-                out.write(output_bgr)
-
-                job.current_frame = i + 1
-                job.progress = 70.0 + (i / len(frames)) * 20.0
-
-                # Save preview frame periodically
-                if i == 0 or i == len(frames) - 1 or i % max(1, len(frames) // 5) == 0:
-                    output_preview_path = str(self.preview_dir / f"{job_id}_output.jpg")
-                    output_temp = str(self.preview_dir / f"{job_id}_output_tmp.jpg")
-                    cv2.imwrite(output_temp, output_bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
-                    os.replace(output_temp, output_preview_path)
-                    job.preview_frame_path = f"{job_id}_output.jpg"
-
-            out.release()
-
-            job.progress = 90.0
-            await asyncio.sleep(0)
-
-            # Re-encode with ffmpeg for browser compatibility (H.264)
-            temp_path = job.output_path
-            final_path = job.output_path.replace('.mp4', '_h264.mp4')
-
-            result = subprocess.run([
-                'ffmpeg', '-y', '-i', temp_path,
-                '-c:v', 'libx264', '-preset', 'fast',
-                '-crf', '23', '-pix_fmt', 'yuv420p',
-                final_path
-            ], capture_output=True, text=True)
-
-            if result.returncode == 0:
-                os.remove(temp_path)
-                os.rename(final_path, temp_path)
-
-            job.status = JobStatus.COMPLETED
-            job.completed_at = time.time()
-            job.progress = 100.0
-            return True
-
-        except Exception as e:
-            job.status = JobStatus.FAILED
-            job.error = str(e)
-            job.completed_at = time.time()
-            print(f"MonarchRT generation error for job {job_id}: {e}")
-            import traceback
-            traceback.print_exc()
-
+        with pipeline_lock():
             try:
-                if os.path.exists(job.output_path):
-                    os.remove(job.output_path)
-            except OSError:
-                pass
+                if job.model != pipeline.get_current_model():
+                    pipeline.load_model(job.model)
+                pipeline.update_prompt(job.prompt)
 
-            return False
+                from app.config import MODELS
+                model_config = MODELS.get(job.model)
+                num_frames = model_config.num_output_frames if model_config else job.total_frames
+                out_w = model_config.width if model_config and model_config.width else 832
+                out_h = model_config.height if model_config and model_config.height else 480
+
+                job.total_frames = num_frames
+                job.progress = 5.0
+
+                frames = pipeline.generate_video(
+                    prompt=job.prompt,
+                    num_frames=num_frames,
+                    width=out_w,
+                    height=out_h,
+                )
+
+                if not frames:
+                    raise ValueError("MonarchRT generation returned no frames")
+
+                job.progress = 70.0
+
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                out = cv2.VideoWriter(job.output_path, fourcc, job.fps, (out_w, out_h))
+
+                for i, frame in enumerate(frames):
+                    output_array = np.array(frame)
+                    output_bgr = cv2.cvtColor(output_array, cv2.COLOR_RGB2BGR)
+
+                    h, w = output_bgr.shape[:2]
+                    if w != out_w or h != out_h:
+                        output_bgr = cv2.resize(output_bgr, (out_w, out_h))
+
+                    out.write(output_bgr)
+
+                    job.current_frame = i + 1
+                    job.progress = 70.0 + (i / max(1, len(frames))) * 20.0
+
+                    # Save a preview frame at start, end, and a few mid-points.
+                    if i == 0 or i == len(frames) - 1 or i % max(1, len(frames) // 5) == 0:
+                        output_preview_path = str(self.preview_dir / f"{job.job_id}_output.jpg")
+                        output_temp = str(self.preview_dir / f"{job.job_id}_output_tmp.jpg")
+                        cv2.imwrite(output_temp, output_bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                        os.replace(output_temp, output_preview_path)
+                        job.preview_frame_path = f"{job.job_id}_output.jpg"
+
+                out.release()
+
+                job.progress = 90.0
+                self._reencode_to_h264(job.output_path)
+
+                job.status = JobStatus.COMPLETED
+                job.completed_at = time.time()
+                job.progress = 100.0
+                return True
+
+            except Exception as e:
+                job.status = JobStatus.FAILED
+                job.error = str(e)
+                job.completed_at = time.time()
+                print(f"MonarchRT generation error for job {job.job_id}: {e}")
+                import traceback
+                traceback.print_exc()
+
+                try:
+                    os.remove(job.output_path)
+                except OSError:
+                    pass
+
+                return False
 
     async def process_job(self, job_id: str, pipeline) -> bool:
-        """Process a video job asynchronously."""
+        """Async entry point for a video-to-video job.
+
+        The blocking per-frame work (cv2 reads, model inference, preview
+        writes, ffmpeg re-encode) runs in asyncio.to_thread so the event
+        loop stays free to serve /api/job/* polling while a job is running.
+        """
         job = self.jobs.get(job_id)
         if not job:
             return False
+        return await asyncio.to_thread(self._process_job_sync, job, pipeline)
 
+    def _process_job_sync(self, job: "ProcessingJob", pipeline) -> bool:
+        """Blocking body of process_job. Runs in a worker thread.
+
+        Holds pipeline_lock for the whole run so a concurrent job can't
+        swap the loaded model between frames.
+        """
         job.status = JobStatus.PROCESSING
         job.started_at = time.time()
 
-        # Preview frame paths for this job
-        input_preview_path = str(self.preview_dir / f"{job_id}_input.jpg")
-        output_preview_path = str(self.preview_dir / f"{job_id}_output.jpg")
+        input_preview_path = str(self.preview_dir / f"{job.job_id}_input.jpg")
+        output_preview_path = str(self.preview_dir / f"{job.job_id}_output.jpg")
 
-        try:
-            # Check/update model
-            if job.model != pipeline.get_current_model():
-                pipeline.load_model(job.model)
-
-            # Update prompt
-            pipeline.update_prompt(job.prompt)
-
-            # Open input video
-            cap = cv2.VideoCapture(job.input_path)
-            if not cap.isOpened():
-                raise ValueError(f"Cannot open video: {job.input_path}")
-
-            # Create output video writer at model-specific resolution
-            out_w, out_h = pipeline.get_output_resolution()
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            out = cv2.VideoWriter(
-                job.output_path,
-                fourcc,
-                job.fps,
-                (out_w, out_h)
-            )
-
-            frame_idx = 0
-            last_speed_update = time.time()
-            frames_since_update = 0
-
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-
-                # Convert BGR to RGB
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                pil_image = Image.fromarray(frame_rgb)
-
-                # Process through pipeline
-                output_image = pipeline.predict(pil_image)
-
-                # Resize input frame for preview (match output resolution)
-                input_resized = cv2.resize(frame, (out_w, out_h))
-
-                if output_image is not None:
-                    # Convert back to BGR for OpenCV
-                    output_array = np.array(output_image)
-                    output_bgr = cv2.cvtColor(output_array, cv2.COLOR_RGB2BGR)
-                    out.write(output_bgr)
-                else:
-                    # If prediction failed, use input frame as output placeholder
-                    output_bgr = input_resized
-
-                # Save preview frames every 100 frames for real-time visualization
-                # Use atomic writes (write to temp file, then rename) to avoid race conditions
-                if frame_idx % 100 == 0:
-                    input_temp = str(self.preview_dir / f"{job_id}_input_tmp.jpg")
-                    output_temp = str(self.preview_dir / f"{job_id}_output_tmp.jpg")
-                    cv2.imwrite(input_temp, input_resized, [cv2.IMWRITE_JPEG_QUALITY, 85])
-                    cv2.imwrite(output_temp, output_bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
-                    # Atomic rename to avoid serving partial files
-                    os.replace(input_temp, input_preview_path)
-                    os.replace(output_temp, output_preview_path)
-                    job.input_frame_path = f"{job_id}_input.jpg"
-                    job.preview_frame_path = f"{job_id}_output.jpg"
-
-                frame_idx += 1
-                frames_since_update += 1
-                job.current_frame = frame_idx
-                job.progress = (frame_idx / job.total_frames) * 100
-
-                # Update processing speed every second
-                now = time.time()
-                if now - last_speed_update >= 1.0:
-                    job.processing_fps = frames_since_update / (now - last_speed_update)
-                    frames_remaining = job.total_frames - frame_idx
-                    if job.processing_fps > 0:
-                        job.eta_seconds = frames_remaining / job.processing_fps
-                    last_speed_update = now
-                    frames_since_update = 0
-
-                # Yield control to allow other async operations
-                if frame_idx % 10 == 0:
-                    await asyncio.sleep(0)
-
-            cap.release()
-            out.release()
-
-            # Re-encode with ffmpeg for browser compatibility (H.264)
-            temp_path = job.output_path
-            final_path = job.output_path.replace('.mp4', '_h264.mp4')
-
-            # Use ffmpeg to re-encode
-            result = subprocess.run([
-                'ffmpeg', '-y', '-i', temp_path,
-                '-c:v', 'libx264', '-preset', 'fast',
-                '-crf', '23', '-pix_fmt', 'yuv420p',
-                final_path
-            ], capture_output=True, text=True)
-
-            if result.returncode == 0:
-                # Replace original with H.264 version
-                os.remove(temp_path)
-                os.rename(final_path, temp_path)
-
-            job.status = JobStatus.COMPLETED
-            job.completed_at = time.time()
-            job.progress = 100.0
-            return True
-
-        except Exception as e:
-            job.status = JobStatus.FAILED
-            job.error = str(e)
-            job.completed_at = time.time()
-            print(f"Processing error for job {job_id}: {e}")
-            import traceback
-            traceback.print_exc()
-
-            # Clean up partial output file
+        with pipeline_lock():
             try:
-                if os.path.exists(job.output_path):
-                    os.remove(job.output_path)
-            except OSError:
-                pass
+                if job.model != pipeline.get_current_model():
+                    pipeline.load_model(job.model)
+                pipeline.update_prompt(job.prompt)
 
-            # Clean up any temp H.264 re-encode file
-            try:
-                h264_path = job.output_path.replace('.mp4', '_h264.mp4')
-                if os.path.exists(h264_path):
-                    os.remove(h264_path)
-            except OSError:
-                pass
+                cap = cv2.VideoCapture(job.input_path)
+                if not cap.isOpened():
+                    raise ValueError(f"Cannot open video: {job.input_path}")
 
-            return False
+                out_w, out_h = pipeline.get_output_resolution()
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                out = cv2.VideoWriter(job.output_path, fourcc, job.fps, (out_w, out_h))
+
+                frame_idx = 0
+                last_speed_update = time.time()
+                frames_since_update = 0
+
+                while True:
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
+
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    pil_image = Image.fromarray(frame_rgb)
+
+                    output_image = pipeline.predict(pil_image)
+
+                    # Resize the input frame to preview resolution so the
+                    # split-view previews line up side by side.
+                    input_resized = cv2.resize(frame, (out_w, out_h))
+
+                    if output_image is not None:
+                        output_array = np.array(output_image)
+                        output_bgr = cv2.cvtColor(output_array, cv2.COLOR_RGB2BGR)
+                        out.write(output_bgr)
+                    else:
+                        # Prediction failed: reuse the input as a placeholder
+                        # so the preview still shows something.
+                        output_bgr = input_resized
+
+                    # Every 100 frames, refresh the preview images atomically
+                    # so the HTTP handler never serves half-written JPEGs.
+                    if frame_idx % 100 == 0:
+                        input_temp = str(self.preview_dir / f"{job.job_id}_input_tmp.jpg")
+                        output_temp = str(self.preview_dir / f"{job.job_id}_output_tmp.jpg")
+                        cv2.imwrite(input_temp, input_resized, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                        cv2.imwrite(output_temp, output_bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                        os.replace(input_temp, input_preview_path)
+                        os.replace(output_temp, output_preview_path)
+                        job.input_frame_path = f"{job.job_id}_input.jpg"
+                        job.preview_frame_path = f"{job.job_id}_output.jpg"
+
+                    frame_idx += 1
+                    frames_since_update += 1
+                    job.current_frame = frame_idx
+                    # Guard against frame-count probing failures (VFR codecs,
+                    # stream errors) that would otherwise divide by zero.
+                    job.progress = (frame_idx / max(1, job.total_frames)) * 100
+
+                    now = time.time()
+                    if now - last_speed_update >= 1.0:
+                        job.processing_fps = frames_since_update / (now - last_speed_update)
+                        frames_remaining = job.total_frames - frame_idx
+                        if job.processing_fps > 0:
+                            job.eta_seconds = frames_remaining / job.processing_fps
+                        last_speed_update = now
+                        frames_since_update = 0
+
+                cap.release()
+                out.release()
+
+                self._reencode_to_h264(job.output_path)
+
+                job.status = JobStatus.COMPLETED
+                job.completed_at = time.time()
+                job.progress = 100.0
+                return True
+
+            except Exception as e:
+                job.status = JobStatus.FAILED
+                job.error = str(e)
+                job.completed_at = time.time()
+                print(f"Processing error for job {job.job_id}: {e}")
+                import traceback
+                traceback.print_exc()
+
+                # Best-effort cleanup of partial output and any leftover temp.
+                for path in (
+                    job.output_path,
+                    job.output_path.replace('.mp4', '_h264.mp4'),
+                ):
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
+
+                return False
 
     def get_job(self, job_id: str) -> Optional[ProcessingJob]:
         """Get a job by ID."""

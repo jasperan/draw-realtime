@@ -11,6 +11,7 @@ Supports:
 import os
 import sys
 import gc
+import threading
 from pathlib import Path
 from typing import Optional, Dict, Union, Any
 from PIL import Image
@@ -33,8 +34,32 @@ from app.quantization import BitLinear, TernaryLinear
 from app.quantization.utils import load_quantized_model, get_model_size_mb
 
 
+# Serializes GPU access so concurrent jobs can't clobber each other mid-load.
+# It's a threading.Lock (not asyncio.Lock) because worker bodies run inside
+# asyncio.to_thread(...) — a thread lock is loop-agnostic and survives the
+# fresh-event-loop-per-test pattern used by pytest-asyncio.
+_pipeline_lock = threading.Lock()
+
+
+def pipeline_lock() -> threading.Lock:
+    """Return the shared lock that serializes access to the Pipeline singleton."""
+    return _pipeline_lock
+
+
 class Pipeline:
     """Manages StreamDiffusion and Diffusers pipelines with model switching."""
+
+    # Which instance attribute holds the active pipe for each pipeline_type.
+    # Single source of truth for cleanup, already-loaded check, and dispatch.
+    _PIPE_ATTR: Dict[str, str] = {
+        "streamdiffusion": "stream",
+        "streamdiffusion-quantized": "stream",
+        "diffusers": "diffusers_pipe",
+        "flux": "flux_pipe",
+        "flux-quantized": "flux_pipe",
+        "flux-4bit": "flux_pipe",
+        "monarchrt": "monarchrt_pipe",
+    }
 
     def __init__(
         self,
@@ -64,90 +89,66 @@ class Pipeline:
 
         model_config = MODELS[model_key]
 
-        # Check if already loaded
+        # Already loaded? Check via the attr table.
         if model_key == self.current_model_key:
-            if model_config.pipeline_type == "streamdiffusion" and self.stream is not None:
-                print(f"Model {model_key} already loaded")
-                return True
-            if model_config.pipeline_type == "streamdiffusion-quantized" and self.stream is not None:
-                print(f"Model {model_key} already loaded")
-                return True
-            if model_config.pipeline_type == "diffusers" and self.diffusers_pipe is not None:
-                print(f"Model {model_key} already loaded")
-                return True
-            if model_config.pipeline_type in ("flux", "flux-quantized") and self.flux_pipe is not None:
-                print(f"Model {model_key} already loaded")
-                return True
-            if model_config.pipeline_type == "monarchrt" and self.monarchrt_pipe is not None:
+            attr = self._PIPE_ATTR.get(model_config.pipeline_type)
+            if attr and getattr(self, attr, None) is not None:
                 print(f"Model {model_key} already loaded")
                 return True
 
-        # Clean up existing models
         self._cleanup()
-
         print(f"Loading model: {model_config.description}")
 
-        if model_config.pipeline_type == "monarchrt":
-            return self._load_monarchrt_model(model_key, model_config)
-        elif model_config.pipeline_type == "flux":
-            return self._load_flux_model(model_key, model_config)
-        elif model_config.pipeline_type == "flux-quantized":
-            return self._load_flux_quantized_model(model_key, model_config)
-        elif model_config.pipeline_type == "flux-4bit":
-            return self._load_flux_4bit_model(model_key, model_config)
-        elif model_config.pipeline_type == "diffusers":
-            return self._load_diffusers_model(model_key, model_config)
-        elif model_config.pipeline_type == "streamdiffusion-quantized":
-            return self._load_quantized_model(model_key, model_config)
-        else:
-            return self._load_streamdiffusion_model(model_key, model_config)
+        loaders = {
+            "monarchrt": self._load_monarchrt_model,
+            "flux": self._load_flux_model,
+            "flux-quantized": self._load_flux_quantized_model,
+            "flux-4bit": self._load_flux_4bit_model,
+            "diffusers": self._load_diffusers_model,
+            "streamdiffusion-quantized": self._load_quantized_model,
+        }
+        loader = loaders.get(model_config.pipeline_type, self._load_streamdiffusion_model)
+        return loader(model_key, model_config)
 
     def _cleanup(self):
         """Clean up any loaded models and free GPU memory."""
-        # Clear references first, then collect
-        if self.stream is not None:
+        disposers = {
+            "stream": self._dispose_stream,
+            "diffusers_pipe": self._dispose_diffusers_like,
+            "flux_pipe": self._dispose_diffusers_like,
+            "monarchrt_pipe": self._dispose_monarchrt,
+        }
+        for attr, dispose in disposers.items():
+            pipe = getattr(self, attr, None)
+            if pipe is None:
+                continue
             try:
-                # StreamDiffusion may hold internal references
-                if hasattr(self.stream, 'stream') and self.stream.stream is not None:
-                    del self.stream.stream
+                dispose(pipe)
             except Exception:
                 pass
-            del self.stream
-            self.stream = None
-
-        if self.diffusers_pipe is not None:
-            try:
-                if hasattr(self.diffusers_pipe, 'components'):
-                    for component in self.diffusers_pipe.components.values():
-                        if hasattr(component, 'to'):
-                            component.to('cpu')
-            except Exception:
-                pass
-            del self.diffusers_pipe
-            self.diffusers_pipe = None
-
-        if self.flux_pipe is not None:
-            try:
-                if hasattr(self.flux_pipe, 'components'):
-                    for component in self.flux_pipe.components.values():
-                        if hasattr(component, 'to'):
-                            component.to('cpu')
-            except Exception:
-                pass
-            del self.flux_pipe
-            self.flux_pipe = None
-
-        if self.monarchrt_pipe is not None:
-            try:
-                self.monarchrt_pipe.cleanup()
-            except Exception:
-                pass
-            del self.monarchrt_pipe
-            self.monarchrt_pipe = None
+            setattr(self, attr, None)
 
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+    @staticmethod
+    def _dispose_stream(stream):
+        # StreamDiffusion may hold internal references.
+        if hasattr(stream, "stream") and stream.stream is not None:
+            del stream.stream
+
+    @staticmethod
+    def _dispose_diffusers_like(pipe):
+        # Move components to CPU so GPU VRAM is released on del.
+        if hasattr(pipe, "components"):
+            for component in pipe.components.values():
+                if hasattr(component, "to"):
+                    component.to("cpu")
+
+    @staticmethod
+    def _dispose_monarchrt(pipe):
+        pipe.cleanup()
 
     def _load_monarchrt_model(self, model_key: str, model_config) -> bool:
         """Load a MonarchRT model for real-time video generation."""
@@ -497,82 +498,78 @@ class Pipeline:
 
         return converted
 
+    def _build_streamdiffusion_wrapper(
+        self,
+        model_id: str,
+        use_lcm_lora: bool,
+        acceleration: str,
+        engine_dir: Optional[str],
+    ) -> StreamDiffusionWrapper:
+        """Build a StreamDiffusionWrapper with a given acceleration backend.
+
+        engine_dir is only passed when using TensorRT (the xformers path
+        doesn't need a compiled engine cache).
+        """
+        kwargs: Dict[str, Any] = dict(
+            model_id_or_path=model_id,
+            t_index_list=[35, 45],
+            frame_buffer_size=1,
+            width=config.width,
+            height=config.height,
+            use_tiny_vae=config.use_tiny_vae,
+            warmup=10,
+            acceleration=acceleration,
+            do_add_noise=False,
+            mode="img2img",
+            output_type="pil",
+            use_denoising_batch=True,
+            cfg_type="none",
+            use_lcm_lora=use_lcm_lora,
+            use_safety_checker=False,
+            device=self.device,
+            dtype=self.dtype,
+        )
+        if engine_dir is not None:
+            kwargs["engine_dir"] = engine_dir
+        return StreamDiffusionWrapper(**kwargs)
+
+    def _prepare_stream(self):
+        """Run the default prepare() call on the active stream."""
+        self.stream.prepare(
+            prompt=self.current_prompt,
+            negative_prompt=self.current_negative_prompt,
+            num_inference_steps=50,
+            guidance_scale=1.2,
+        )
+
     def _load_streamdiffusion_model(self, model_key: str, model_config) -> bool:
-        """Load a model using StreamDiffusion wrapper."""
+        """Load a model using StreamDiffusion wrapper, with xformers fallback."""
+        def _build(acceleration: str, engine_dir: Optional[str]):
+            self.stream = self._build_streamdiffusion_wrapper(
+                model_config.id, model_config.use_lcm_lora, acceleration, engine_dir,
+            )
+            self._prepare_stream()
+
         try:
-            self.stream = StreamDiffusionWrapper(
-                model_id_or_path=model_config.id,
-                t_index_list=[35, 45],
-                frame_buffer_size=1,
-                width=config.width,
-                height=config.height,
-                use_tiny_vae=config.use_tiny_vae,
-                warmup=10,
-                acceleration=config.acceleration,
-                do_add_noise=False,
-                mode="img2img",
-                output_type="pil",
-                use_denoising_batch=True,
-                cfg_type="none",
-                use_lcm_lora=model_config.use_lcm_lora,
-                use_safety_checker=False,
-                engine_dir=config.engines_dir,
-                device=self.device,
-                dtype=self.dtype,
-            )
-
-            # Prepare with default prompt
-            self.stream.prepare(
-                prompt=self.current_prompt,
-                negative_prompt=self.current_negative_prompt,
-                num_inference_steps=50,
-                guidance_scale=1.2,
-            )
-
+            _build(config.acceleration, config.engines_dir)
             self.current_model_key = model_key
             self.current_pipeline_type = "streamdiffusion"
             print(f"Model {model_key} loaded successfully")
             return True
-
         except Exception as e:
             print(f"Failed to load model {model_key}: {e}")
-            # Try fallback to xformers if TensorRT fails
-            if config.acceleration == "tensorrt":
-                print("Falling back to xformers acceleration...")
-                try:
-                    self.stream = StreamDiffusionWrapper(
-                        model_id_or_path=model_config.id,
-                        t_index_list=[35, 45],
-                        frame_buffer_size=1,
-                        width=config.width,
-                        height=config.height,
-                        use_tiny_vae=config.use_tiny_vae,
-                        warmup=10,
-                        acceleration="xformers",
-                        do_add_noise=False,
-                        mode="img2img",
-                        output_type="pil",
-                        use_denoising_batch=True,
-                        cfg_type="none",
-                        use_lcm_lora=model_config.use_lcm_lora,
-                        use_safety_checker=False,
-                        device=self.device,
-                        dtype=self.dtype,
-                    )
+            if config.acceleration != "tensorrt":
+                return False
 
-                    self.stream.prepare(
-                        prompt=self.current_prompt,
-                        negative_prompt=self.current_negative_prompt,
-                        num_inference_steps=50,
-                        guidance_scale=1.2,
-                    )
-
-                    self.current_model_key = model_key
-                    self.current_pipeline_type = "streamdiffusion"
-                    print(f"Model {model_key} loaded with xformers fallback")
-                    return True
-                except Exception as e2:
-                    print(f"Fallback also failed: {e2}")
+        print("Falling back to xformers acceleration...")
+        try:
+            _build("xformers", None)
+            self.current_model_key = model_key
+            self.current_pipeline_type = "streamdiffusion"
+            print(f"Model {model_key} loaded with xformers fallback")
+            return True
+        except Exception as e2:
+            print(f"Fallback also failed: {e2}")
             return False
 
     def _load_quantized_model(self, model_key: str, model_config) -> bool:
@@ -602,47 +599,18 @@ class Pipeline:
 
             print(f"Loading quantized model from: {quantized_path}")
 
-            # First, load the base model with StreamDiffusion
-            # Use xformers instead of TensorRT for quantized models
-            # (TensorRT doesn't support custom quantized layers)
-            self.stream = StreamDiffusionWrapper(
-                model_id_or_path=base_config.id,
-                t_index_list=[35, 45],
-                frame_buffer_size=1,
-                width=config.width,
-                height=config.height,
-                use_tiny_vae=config.use_tiny_vae,
-                warmup=10,
-                acceleration="xformers",  # Force xformers for quantized
-                do_add_noise=False,
-                mode="img2img",
-                output_type="pil",
-                use_denoising_batch=True,
-                cfg_type="none",
-                use_lcm_lora=base_config.use_lcm_lora,
-                use_safety_checker=False,
-                device=self.device,
-                dtype=self.dtype,
+            # TensorRT can't compile custom quantized layers, so quantized
+            # models always run through xformers.
+            self.stream = self._build_streamdiffusion_wrapper(
+                base_config.id, base_config.use_lcm_lora, "xformers", engine_dir=None,
             )
 
-            # Now replace the U-Net weights with quantized version
             print("Loading quantized U-Net weights...")
             unet = self.stream.stream.unet
-
-            # Load quantized weights
             load_quantized_model(unet, str(quantized_path), device=self.device)
+            print(f"Quantized U-Net size: {get_model_size_mb(unet):.2f} MB")
 
-            # Log model size
-            model_size = get_model_size_mb(unet)
-            print(f"Quantized U-Net size: {model_size:.2f} MB")
-
-            # Prepare with default prompt
-            self.stream.prepare(
-                prompt=self.current_prompt,
-                negative_prompt=self.current_negative_prompt,
-                num_inference_steps=50,
-                guidance_scale=1.2,
-            )
+            self._prepare_stream()
 
             self.current_model_key = model_key
             self.current_pipeline_type = "streamdiffusion-quantized"
@@ -656,15 +624,30 @@ class Pipeline:
             return False
 
     def update_prompt(self, prompt: str, negative_prompt: Optional[str] = None):
-        """Update the generation prompt."""
+        """Update the generation prompt.
+
+        Diffusers-style pipes don't need a separate prompt update — the
+        prompt is passed at inference time. Only StreamDiffusion needs
+        to push the new prompt into its internal scheduler state.
+        """
         if prompt != self.current_prompt:
             self.current_prompt = prompt
-            if self.stream:
-                self.stream.stream.update_prompt(prompt)
-            # Diffusers pipe doesn't need prompt update - it's passed at inference time
+            if self.stream is not None:
+                self._streamdiffusion_set_prompt(prompt)
 
         if negative_prompt and negative_prompt != self.current_negative_prompt:
             self.current_negative_prompt = negative_prompt
+
+    def _streamdiffusion_set_prompt(self, prompt: str):
+        """Push a prompt into StreamDiffusion's internal scheduler.
+
+        The upstream StreamDiffusionWrapper doesn't expose update_prompt,
+        so we have to reach through `.stream` to the underlying
+        StreamDiffusion object. This helper is the single place that
+        coupling lives — if the wrapper ever adds a surface method, only
+        this function needs to change.
+        """
+        self.stream.stream.update_prompt(prompt)
 
     def get_output_resolution(self) -> tuple[int, int]:
         """Get the output resolution for the currently loaded model."""
@@ -676,20 +659,17 @@ class Pipeline:
         return (config.width, config.height)
 
     def predict(self, image: Union[Image.Image, np.ndarray]) -> Optional[Image.Image]:
-        """Process an image through the pipeline."""
+        """Process an image through the active pipeline."""
         try:
-            # Convert numpy array to PIL if needed
             if isinstance(image, np.ndarray):
                 image = Image.fromarray(image)
 
-            # Get the target resolution for the active model
             out_w, out_h = self.get_output_resolution()
+            image = image.resize((out_w, out_h))
 
             if self.current_pipeline_type in ("flux", "flux-quantized", "flux-4bit") and self.flux_pipe is not None:
-                # Use FLUX.2 Klein pipeline (in-context conditioning)
                 model_config = MODELS[self.current_model_key]
-                image = image.resize((out_w, out_h))
-                output = self.flux_pipe(
+                return self.flux_pipe(
                     prompt=self.current_prompt,
                     image=image,
                     height=out_h,
@@ -697,28 +677,21 @@ class Pipeline:
                     guidance_scale=model_config.guidance_scale,
                     num_inference_steps=model_config.num_inference_steps,
                 ).images[0]
-                return output
 
-            elif self.current_pipeline_type == "diffusers" and self.diffusers_pipe is not None:
-                # Use Diffusers pipeline
-                image = image.resize((config.width, config.height))
+            if self.current_pipeline_type == "diffusers" and self.diffusers_pipe is not None:
                 model_config = MODELS[self.current_model_key]
-                output = self.diffusers_pipe(
+                return self.diffusers_pipe(
                     prompt=self.current_prompt,
                     negative_prompt=self.current_negative_prompt,
                     image=image,
                     num_inference_steps=model_config.num_inference_steps,
-                    strength=0.5,  # How much to transform (0=no change, 1=complete regeneration)
-                    guidance_scale=0.0,  # CFG scale (0 for 1-step models)
+                    strength=0.5,
+                    guidance_scale=0.0,  # 1-step models (Hyper-SDXL) need CFG=0
                 ).images[0]
-                return output
 
-            elif self.stream is not None:
-                # Use StreamDiffusion
-                image = image.resize((config.width, config.height))
+            if self.stream is not None:
                 image_tensor = self.stream.preprocess_image(image)
-                output = self.stream(image=image_tensor)
-                return output
+                return self.stream(image=image_tensor)
 
             return None
         except Exception as e:

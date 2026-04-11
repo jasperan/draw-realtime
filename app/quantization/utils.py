@@ -7,7 +7,6 @@ This module provides:
 - Weight packing utilities (optional, for further compression)
 """
 
-import os
 import json
 import torch
 import torch.nn as nn
@@ -15,7 +14,6 @@ from typing import Dict, Any, Optional, List
 from pathlib import Path
 
 from .bitlinear import BitLinear
-from .quantize import replace_linear_with_bitlinear
 
 
 def save_quantized_model(

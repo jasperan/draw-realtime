@@ -38,14 +38,12 @@ from PIL import Image
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn
 from rich.table import Table
-from rich import print as rprint
 
 # Add project to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from app.config import config, MODELS, DEFAULT_MODEL, DEFAULT_PROMPT, PROMPT_PRESETS, DEFAULT_PRESET
+from app.config import MODELS, DEFAULT_MODEL, DEFAULT_PROMPT, PROMPT_PRESETS, DEFAULT_PRESET
 from app.video_source import get_available_videos, get_video_path
-from app.multistyle import STYLES as MULTISTYLE_STYLES
 
 console = Console()
 
@@ -439,7 +437,7 @@ def process_multistyle(
         console.print(f"[bold green]Using provided description...[/bold green]")
         job.description = description
     else:
-        with console.status("[bold green]Analyzing video with LLaVA...") as status:
+        with console.status("[bold green]Analyzing video with LLaVA..."):
             job.description = processor.analyze_video_with_llava(input_path)
 
     console.print(f"[bold]Description:[/bold] {job.description}\n")

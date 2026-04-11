@@ -29,7 +29,7 @@ from utils.wrapper import StreamDiffusionWrapper
 from app.config import MODELS, DEFAULT_MODEL, DEFAULT_PROMPT, DEFAULT_NEGATIVE_PROMPT, config
 
 # Quantization support
-from app.quantization import quantize_unet, BitLinear, TernaryLinear
+from app.quantization import BitLinear, TernaryLinear
 from app.quantization.utils import load_quantized_model, get_model_size_mb
 
 

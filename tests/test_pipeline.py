@@ -3,7 +3,6 @@
 from unittest.mock import patch, MagicMock
 
 import numpy as np
-import pytest
 import torch
 from PIL import Image
 

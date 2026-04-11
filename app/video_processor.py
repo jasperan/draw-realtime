@@ -8,7 +8,7 @@ import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Optional, Dict, Callable
+from typing import Optional, Dict
 import cv2
 import numpy as np
 from PIL import Image
@@ -287,9 +287,6 @@ class VideoProcessor:
             if not cap.isOpened():
                 raise ValueError(f"Cannot open video: {job.input_path}")
 
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
             # Create output video writer at model-specific resolution
             out_w, out_h = pipeline.get_output_resolution()
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -318,7 +315,7 @@ class VideoProcessor:
 
                 # Resize input frame for preview (match output resolution)
                 input_resized = cv2.resize(frame, (out_w, out_h))
-                
+
                 if output_image is not None:
                     # Convert back to BGR for OpenCV
                     output_array = np.array(output_image)

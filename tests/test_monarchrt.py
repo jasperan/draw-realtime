@@ -3,10 +3,8 @@
 All GPU/model operations are mocked so tests run without MonarchRT installed.
 """
 
-import os
 import sys
-from pathlib import Path
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -363,7 +361,7 @@ class TestMonarchRTAPI:
         """Set up mocks for API testing."""
         with patch("app.main.get_pipeline") as mock_get_pipeline, \
              patch("app.main.get_processor") as mock_get_processor, \
-             patch("app.main.get_multistyle_processor") as mock_get_multi, \
+             patch("app.main.get_multistyle_processor"), \
              patch("app.main.is_monarchrt_available") as mock_mrt_avail:
 
             mock_pipeline = MagicMock()
@@ -413,8 +411,7 @@ class TestMonarchRTAPI:
 
     def test_generate_endpoint_creates_job(self, client, mock_deps):
         """POST /api/generate creates a generation job."""
-        from app.video_processor import ProcessingJob, JobStatus
-        import time
+        from app.video_processor import ProcessingJob
 
         mock_job = ProcessingJob(
             job_id="test123",

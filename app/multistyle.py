@@ -2,16 +2,14 @@
 
 import asyncio
 import base64
-import json
 import os
 import subprocess
-import tempfile
 import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Optional, Dict, List, Callable
+from typing import Optional, Dict, List
 import cv2
 import numpy as np
 from PIL import Image

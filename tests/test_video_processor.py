@@ -1,10 +1,8 @@
 """Tests for app/video_processor.py - job management and processing logic."""
 
 import time
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-import numpy as np
 import pytest
 
 
@@ -28,7 +26,7 @@ class TestJobStatus:
 
 class TestProcessingJob:
     def test_to_dict(self):
-        from app.video_processor import ProcessingJob, JobStatus
+        from app.video_processor import ProcessingJob
 
         job = ProcessingJob(
             job_id="abc123",

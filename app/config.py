@@ -1,6 +1,6 @@
 """Configuration for StreamDiffusion real-time demo."""
 
-from typing import Dict, Any, Literal, Optional
+from typing import Dict, Literal, Optional
 from pydantic import BaseModel
 import os
 

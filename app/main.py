@@ -1,32 +1,27 @@
 """StreamDiffusion Video-to-Video Demo - FastAPI Application."""
 
-import asyncio
-import io
 import json
 import logging
 import mimetypes
 import os
 import shutil
 import subprocess
-import time
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 import cv2
-import numpy as np
-from fastapi import FastAPI, WebSocket, HTTPException, Request, UploadFile, File, BackgroundTasks, Form
-from fastapi.responses import StreamingResponse, JSONResponse, FileResponse, Response
+from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Form
+from fastapi.responses import JSONResponse, FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from PIL import Image
 from pydantic import BaseModel, Field
 
 from app.config import config, MODELS, DEFAULT_MODEL, DEFAULT_PROMPT, PROMPT_PRESETS, DEFAULT_PRESET
 from app.pipeline import get_pipeline
-from app.video_source import get_available_videos, get_video_path, VideoSource
-from app.video_processor import get_processor, JobStatus
+from app.video_source import get_available_videos, get_video_path
+from app.video_processor import get_processor
 from app.multistyle import get_multistyle_processor, STYLES as MULTISTYLE_STYLES
 from app.monarchrt_pipeline import is_monarchrt_available
 

@@ -22,7 +22,7 @@ Performance optimizations:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Tuple
+from typing import Optional
 
 # Try to import Triton
 try:
@@ -68,7 +68,6 @@ if TRITON_AVAILABLE:
         pid = tl.program_id(0)
 
         # Compute tile indices
-        num_pid_m = tl.cdiv(M, BLOCK_M)
         num_pid_n = tl.cdiv(N, BLOCK_N)
         pid_m = pid // num_pid_n
         pid_n = pid % num_pid_n
@@ -128,199 +127,6 @@ if TRITON_AVAILABLE:
             acc = acc + bias[None, :]
 
         # Store output
-        out_ptrs = out_ptr + offs_m[:, None] * stride_om + offs_n[None, :] * stride_on
-        out_mask = (offs_m[:, None] < M) & (offs_n[None, :] < N)
-        tl.store(out_ptrs, acc.to(tl.float16), mask=out_mask)
-
-    @triton.jit
-    def _ternary_matmul_kernel(
-        # Pointers
-        x_ptr,          # Input: [M, K]
-        w_packed_ptr,   # Packed weights: [N, K//4]
-        scale_ptr,      # Scale: [1] or [N]
-        bias_ptr,       # Bias: [N] or None
-        out_ptr,        # Output: [M, N]
-        # Shapes
-        M, N, K,
-        # Strides
-        stride_xm, stride_xk,
-        stride_wn, stride_wk,
-        stride_om, stride_on,
-        # Meta
-        HAS_BIAS: tl.constexpr,
-        BLOCK_M: tl.constexpr,
-        BLOCK_N: tl.constexpr,
-        BLOCK_K: tl.constexpr,
-    ):
-        """
-        Triton kernel for ternary matrix multiplication.
-
-        Computes: out[m, n] = sum_k(x[m, k] * w_ternary[n, k]) * scale + bias[n]
-
-        Where w_ternary values are unpacked from w_packed on-the-fly.
-        """
-        # Program IDs
-        pid_m = tl.program_id(0)
-        pid_n = tl.program_id(1)
-
-        # Block starting positions
-        offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
-        offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
-
-        # Initialize accumulator
-        acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
-
-        # K must be processed in chunks of 4 (since 4 values per packed byte)
-        # BLOCK_K should be multiple of 4
-        for k_start in range(0, K, BLOCK_K):
-            offs_k = k_start + tl.arange(0, BLOCK_K)
-
-            # Load input tile: [BLOCK_M, BLOCK_K]
-            x_ptrs = x_ptr + offs_m[:, None] * stride_xm + offs_k[None, :] * stride_xk
-            x_mask = (offs_m[:, None] < M) & (offs_k[None, :] < K)
-            x_tile = tl.load(x_ptrs, mask=x_mask, other=0.0).to(tl.float32)
-
-            # Load packed weights: [BLOCK_N, BLOCK_K//4]
-            # Each byte contains 4 ternary values
-            offs_k_packed = (k_start // 4) + tl.arange(0, BLOCK_K // 4)
-            w_ptrs = w_packed_ptr + offs_n[:, None] * stride_wn + offs_k_packed[None, :] * stride_wk
-            w_mask = (offs_n[:, None] < N) & (offs_k_packed[None, :] < (K + 3) // 4)
-            w_packed = tl.load(w_ptrs, mask=w_mask, other=0).to(tl.uint8)
-
-            # Unpack weights: each byte → 4 ternary values
-            # Bit layout: [v3|v2|v1|v0] where each vi is 2 bits
-            # Extract each 2-bit value and map: 0→0, 1→+1, 2→-1
-
-            # For each packed byte, extract 4 values
-            for sub_k in range(4):
-                k_idx = k_start + tl.arange(0, BLOCK_K // 4) * 4 + sub_k
-
-                # Extract 2-bit code for this sub-position
-                shift = sub_k * 2
-                codes = (w_packed >> shift) & 0x03  # [BLOCK_N, BLOCK_K//4]
-
-                # Map codes to ternary: 0→0, 1→+1, 2→-1
-                # Using: ternary = (code & 1) - (code >> 1)
-                # code=0: (0&1) - (0>>1) = 0 - 0 = 0
-                # code=1: (1&1) - (1>>1) = 1 - 0 = 1
-                # code=2: (2&1) - (2>>1) = 0 - 1 = -1
-                w_ternary = (codes & 1).to(tl.int8) - (codes >> 1).to(tl.int8)
-                w_ternary = w_ternary.to(tl.float32)  # [BLOCK_N, BLOCK_K//4]
-
-                # Get corresponding x values
-                x_sub_idx = sub_k + tl.arange(0, BLOCK_K // 4) * 4
-                x_sub = tl.load(
-                    x_ptr + offs_m[:, None] * stride_xm + (k_start + x_sub_idx[None, :]) * stride_xk,
-                    mask=(offs_m[:, None] < M) & ((k_start + x_sub_idx[None, :]) < K),
-                    other=0.0
-                ).to(tl.float32)  # [BLOCK_M, BLOCK_K//4]
-
-                # Accumulate: acc[m, n] += x[m, k] * w[n, k]
-                acc += tl.dot(x_sub, tl.trans(w_ternary))
-
-        # Load scale and apply
-        scale = tl.load(scale_ptr)
-        acc = acc * scale
-
-        # Add bias if present
-        if HAS_BIAS:
-            bias = tl.load(bias_ptr + offs_n, mask=offs_n < N, other=0.0)
-            acc = acc + bias[None, :]
-
-        # Store output
-        out_ptrs = out_ptr + offs_m[:, None] * stride_om + offs_n[None, :] * stride_on
-        out_mask = (offs_m[:, None] < M) & (offs_n[None, :] < N)
-        tl.store(out_ptrs, acc.to(tl.float16), mask=out_mask)
-
-
-    @triton.jit
-    def _ternary_matmul_kernel_simple(
-        # Pointers
-        x_ptr,          # Input: [M, K]
-        w_packed_ptr,   # Packed weights: [N, K//4]
-        scale_ptr,      # Scale: scalar
-        bias_ptr,       # Bias: [N] or None
-        out_ptr,        # Output: [M, N]
-        # Shapes
-        M, N, K, K_packed,
-        # Strides
-        stride_xm, stride_xk,
-        stride_wn, stride_wk,
-        stride_om, stride_on,
-        # Meta
-        HAS_BIAS: tl.constexpr,
-        BLOCK_M: tl.constexpr,
-        BLOCK_N: tl.constexpr,
-    ):
-        """
-        Simpler Triton kernel - processes one output element per thread block.
-        Less optimized but more straightforward.
-        """
-        # Program IDs - each block computes one BLOCK_M x BLOCK_N tile of output
-        pid_m = tl.program_id(0)
-        pid_n = tl.program_id(1)
-
-        # Offsets within block
-        offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
-        offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
-
-        # Initialize accumulator
-        acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
-
-        # Process K dimension - unroll the inner loop for 4 values per packed byte
-        for k_packed in range(K_packed):
-            # Load packed weights for this k position: [BLOCK_N]
-            w_ptrs = w_packed_ptr + offs_n * stride_wn + k_packed * stride_wk
-            w_mask = offs_n < N
-            w_packed_val = tl.load(w_ptrs, mask=w_mask, other=0)
-
-            # Process 4 values from this packed byte
-            # Value 0 (bits 0-1)
-            k_idx_0 = k_packed * 4 + 0
-            code_0 = w_packed_val & 0x03
-            w_ternary_0 = (code_0 & 1).to(tl.float32) - (code_0 >> 1).to(tl.float32)
-            x_ptrs_0 = x_ptr + offs_m * stride_xm + k_idx_0 * stride_xk
-            x_mask_0 = (offs_m < M) & (k_idx_0 < K)
-            x_vals_0 = tl.load(x_ptrs_0, mask=x_mask_0, other=0.0).to(tl.float32)
-            acc += x_vals_0[:, None] * w_ternary_0[None, :]
-
-            # Value 1 (bits 2-3)
-            k_idx_1 = k_packed * 4 + 1
-            code_1 = (w_packed_val >> 2) & 0x03
-            w_ternary_1 = (code_1 & 1).to(tl.float32) - (code_1 >> 1).to(tl.float32)
-            x_ptrs_1 = x_ptr + offs_m * stride_xm + k_idx_1 * stride_xk
-            x_mask_1 = (offs_m < M) & (k_idx_1 < K)
-            x_vals_1 = tl.load(x_ptrs_1, mask=x_mask_1, other=0.0).to(tl.float32)
-            acc += x_vals_1[:, None] * w_ternary_1[None, :]
-
-            # Value 2 (bits 4-5)
-            k_idx_2 = k_packed * 4 + 2
-            code_2 = (w_packed_val >> 4) & 0x03
-            w_ternary_2 = (code_2 & 1).to(tl.float32) - (code_2 >> 1).to(tl.float32)
-            x_ptrs_2 = x_ptr + offs_m * stride_xm + k_idx_2 * stride_xk
-            x_mask_2 = (offs_m < M) & (k_idx_2 < K)
-            x_vals_2 = tl.load(x_ptrs_2, mask=x_mask_2, other=0.0).to(tl.float32)
-            acc += x_vals_2[:, None] * w_ternary_2[None, :]
-
-            # Value 3 (bits 6-7)
-            k_idx_3 = k_packed * 4 + 3
-            code_3 = (w_packed_val >> 6) & 0x03
-            w_ternary_3 = (code_3 & 1).to(tl.float32) - (code_3 >> 1).to(tl.float32)
-            x_ptrs_3 = x_ptr + offs_m * stride_xm + k_idx_3 * stride_xk
-            x_mask_3 = (offs_m < M) & (k_idx_3 < K)
-            x_vals_3 = tl.load(x_ptrs_3, mask=x_mask_3, other=0.0).to(tl.float32)
-            acc += x_vals_3[:, None] * w_ternary_3[None, :]
-
-        # Apply scale
-        scale = tl.load(scale_ptr)
-        acc = acc * scale
-
-        # Add bias
-        if HAS_BIAS:
-            bias = tl.load(bias_ptr + offs_n, mask=offs_n < N, other=0.0)
-            acc = acc + bias[None, :]
-
-        # Store
         out_ptrs = out_ptr + offs_m[:, None] * stride_om + offs_n[None, :] * stride_on
         out_mask = (offs_m[:, None] < M) & (offs_n[None, :] < N)
         tl.store(out_ptrs, acc.to(tl.float16), mask=out_mask)

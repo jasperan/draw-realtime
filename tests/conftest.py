@@ -3,15 +3,9 @@
 All GPU/model operations are mocked so tests run without a GPU.
 """
 
-import asyncio
-import os
-import shutil
 import sys
-import tempfile
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Optional
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -137,7 +131,6 @@ def mock_pipeline():
 @pytest.fixture
 def mock_monarchrt_pipeline():
     """A mock MonarchRTPipeline that does not require GPU or MonarchRT install."""
-    from unittest.mock import PropertyMock
 
     monarchrt = MagicMock()
     monarchrt.is_loaded = True
@@ -162,5 +155,3 @@ def mock_torch_cuda():
     with patch("torch.cuda.is_available", return_value=False), \
          patch("torch.cuda.empty_cache"):
         yield
-
-

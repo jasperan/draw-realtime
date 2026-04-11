@@ -1,8 +1,6 @@
 """Tests for app/video_source.py - video discovery and reading logic."""
 
-import os
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import numpy as np
 import pytest

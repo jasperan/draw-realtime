@@ -4,7 +4,6 @@ All tests run on CPU without a GPU.
 """
 
 import torch
-import pytest
 
 
 # ---------------------------------------------------------------------------

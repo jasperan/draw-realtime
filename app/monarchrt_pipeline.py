@@ -14,11 +14,10 @@ Requires separate installation:
 """
 
 import gc
-import os
 import sys
 import logging
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Optional, List
 
 import numpy as np
 from PIL import Image
@@ -165,7 +164,6 @@ class MonarchRTPipeline:
             checkpoint_dir: Path to Wan model checkpoint directory
         """
         try:
-            import torch
 
             _ensure_monarchrt_on_path()
             from wan.text2video import WanT2V
@@ -229,7 +227,6 @@ class MonarchRTPipeline:
             return None
 
         try:
-            import torch
 
             if self.mode == "bidirectional":
                 return self._generate_bidirectional(
@@ -263,7 +260,6 @@ class MonarchRTPipeline:
         negative_prompt: str,
     ) -> Optional[List[Image.Image]]:
         """Generate video using Wan2.1 bidirectional model."""
-        import torch
 
         # Wan2.1 requires frame count in format 4n+1
         num_frames = self._align_frame_count(num_frames)
@@ -329,7 +325,6 @@ class MonarchRTPipeline:
     @staticmethod
     def _tensor_to_frames(video_tensor) -> List[Image.Image]:
         """Convert a video tensor (C, N, H, W) or (B, C, N, H, W) to list of PIL Images."""
-        import torch
 
         if video_tensor is None:
             return []

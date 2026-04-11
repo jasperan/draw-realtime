@@ -13,14 +13,6 @@ import torch
 from typing import Tuple
 
 
-# Encoding: ternary value → 2-bit code
-# -1 → 0b10 (2)
-#  0 → 0b00 (0)
-# +1 → 0b01 (1)
-TERNARY_TO_CODE = {-1: 2, 0: 0, 1: 1}
-CODE_TO_TERNARY = {2: -1, 0: 0, 1: 1}
-
-
 def pack_ternary_weights(weight_ternary: torch.Tensor) -> Tuple[torch.Tensor, Tuple[int, ...]]:
     """
     Pack ternary weights from int8 to 2-bit representation.
@@ -83,8 +75,6 @@ def unpack_ternary_weights(packed: torch.Tensor, original_shape: Tuple[int, ...]
     Returns:
         Int8 tensor with values in {-1, 0, +1}
     """
-    device = packed.device
-
     # Calculate total elements needed
     total_elements = 1
     for dim in original_shape:
@@ -130,7 +120,6 @@ def pack_for_triton(weight_ternary: torch.Tensor) -> Tuple[torch.Tensor, torch.T
     """
     assert weight_ternary.dim() == 2, "Expected 2D weight tensor"
     out_features, in_features = weight_ternary.shape
-    device = weight_ternary.device
 
     # Pad in_features to multiple of 4
     pad_size = (4 - in_features % 4) % 4
@@ -170,7 +159,6 @@ def unpack_for_triton(packed: torch.Tensor, original_shape: Tuple[int, int]) -> 
         Int8 tensor of shape [out_features, in_features]
     """
     out_features, in_features = original_shape
-    device = packed.device
 
     # Unpack
     v0 = packed & 0b00000011

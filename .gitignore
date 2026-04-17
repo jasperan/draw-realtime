@@ -267,3 +267,6 @@ docs/*.md
 *_FEATURES.md
 *_ENHANCEMENTS.md
 *_REPORT.md
+
+# Generated content (local only)
+content/

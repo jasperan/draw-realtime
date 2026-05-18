@@ -84,6 +84,28 @@ pip install -r requirements.txt
 cd frontend && npm install && npm run build && cd ..
 ```
 
+### Developer Verification
+
+For local development, install the optional verification tools after the runtime
+dependencies:
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+```
+
+Run the standard local check suite:
+
+```bash
+./scripts/verify.sh
+```
+
+The script runs syntax compilation, pytest when installed, frontend build/audit
+checks when npm dependencies are present, optional Python security tooling, and
+whitespace checks. Set `VERIFY_STRICT=1` to treat missing optional tools as
+failures in CI-like environments. Python dependency and Bandit scans are
+advisory by default because this repo currently has known ML-stack audit
+findings; set `VERIFY_SECURITY_STRICT=1` to fail on those reports.
+
 ### Run
 
 ```bash

@@ -251,6 +251,9 @@ thumbnails/
 
 # Test scripts (development only)
 scripts/
+!scripts/
+scripts/*
+!scripts/verify.sh
 
 # Test pipelines
 test_pipelines/

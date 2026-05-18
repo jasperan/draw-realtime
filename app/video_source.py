@@ -10,6 +10,9 @@ import numpy as np
 from app.config import config
 
 
+VIDEO_EXTENSIONS = {'.mp4', '.avi', '.mov', '.mkv', '.webm'}
+
+
 class VideoSource:
     """Handles reading frames from video files."""
 
@@ -96,29 +99,41 @@ def get_available_videos() -> List[dict]:
         return []
 
     videos = []
-    extensions = {'.mp4', '.avi', '.mov', '.mkv', '.webm'}
 
     for f in sorted(videos_dir.iterdir()):
-        if f.is_file() and f.suffix.lower() in extensions:
-            # Get video info
-            try:
-                cap = cv2.VideoCapture(str(f))
-                if cap.isOpened():
-                    fps = cap.get(cv2.CAP_PROP_FPS)
-                    frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                    duration = frames / fps if fps > 0 else 0
-                    cap.release()
+        if not f.is_file() or f.suffix.lower() not in VIDEO_EXTENSIONS:
+            continue
 
-                    videos.append({
-                        "name": f.name,
-                        "path": str(f),
-                        "duration": round(duration, 1),
-                        "fps": round(fps, 1),
-                    })
-            except Exception:
-                pass
+        metadata = _read_video_metadata(f)
+        if metadata:
+            videos.append(metadata)
 
     return videos
+
+
+def _read_video_metadata(video_path: Path) -> Optional[dict]:
+    """Return listing metadata for a readable video, otherwise None."""
+    cap = None
+    try:
+        cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            return None
+
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        duration = frames / fps if fps > 0 else 0
+
+        return {
+            "name": video_path.name,
+            "path": str(video_path),
+            "duration": round(duration, 1),
+            "fps": round(fps, 1),
+        }
+    except Exception:
+        return None
+    finally:
+        if cap is not None:
+            cap.release()
 
 
 def get_video_path(filename: str) -> Optional[str]:
@@ -130,9 +145,8 @@ def get_video_path(filename: str) -> Optional[str]:
     try:
         video_path = video_path.resolve()
         videos_dir = videos_dir.resolve()
-        if not str(video_path).startswith(str(videos_dir)):
-            return None
-    except Exception:
+        video_path.relative_to(videos_dir)
+    except (ValueError, OSError, RuntimeError):
         return None
 
     if video_path.exists() and video_path.is_file():

@@ -151,6 +151,19 @@ class TestUploadVideo:
 
 
 # ---------------------------------------------------------------------------
+# POST /api/process
+# ---------------------------------------------------------------------------
+
+class TestProcessVideo:
+    def test_uploaded_file_path_traversal_rejected(self, client):
+        resp = client.post(
+            "/api/process",
+            data={"uploaded_file": "../secret.mp4", "prompt": "test"},
+        )
+        assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
 # GET /api/jobs
 # ---------------------------------------------------------------------------
 
@@ -312,3 +325,16 @@ class TestMultistyleStyles:
         assert resp.status_code == 200
         data = resp.json()
         assert "styles" in data
+
+
+# ---------------------------------------------------------------------------
+# POST /api/multistyle/process
+# ---------------------------------------------------------------------------
+
+class TestMultistyleProcess:
+    def test_uploaded_file_path_traversal_rejected(self, client):
+        resp = client.post(
+            "/api/multistyle/process",
+            data={"uploaded_file": "../secret.mp4"},
+        )
+        assert resp.status_code == 400

@@ -58,9 +58,55 @@ def _safe_path(base_dir: Path, filename: str) -> Path:
         base_resolved = Path(base_dir).resolve()
         candidate = (base_resolved / filename).resolve()
         candidate.relative_to(base_resolved)
-    except (ValueError, OSError):
+    except (ValueError, OSError, RuntimeError):
         raise HTTPException(status_code=400, detail="Invalid filename")
     return candidate
+
+
+def _safe_child_path(base_dir: Path, filename: str) -> Path:
+    """Return a direct child path under `base_dir` for internal file handles."""
+    if not filename or "/" in filename or "\\" in filename or "\x00" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    try:
+        base_resolved = Path(base_dir).resolve()
+        candidate = (base_resolved / filename).resolve()
+        candidate.relative_to(base_resolved)
+    except (ValueError, OSError, RuntimeError):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    return candidate
+
+
+def _remove_if_exists(path: Path | str) -> None:
+    """Best-effort removal for files that may already be gone."""
+    try:
+        Path(path).unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
+
+def _resolve_input_video_path(
+    processor,
+    *,
+    uploaded_file: Optional[str],
+    video_name: Optional[str],
+) -> str:
+    """Resolve the selected input video from uploads or the server library."""
+    if uploaded_file:
+        upload_path = _safe_child_path(processor.uploads_dir, uploaded_file)
+        if not upload_path.exists():
+            raise HTTPException(status_code=404, detail="Uploaded file not found")
+        return str(upload_path)
+
+    if video_name:
+        input_path = get_video_path(video_name)
+        if not input_path:
+            raise HTTPException(status_code=404, detail="Video not found")
+        return input_path
+
+    raise HTTPException(status_code=400, detail="No video specified")
 
 
 def _probe_video_metadata(video_path: Path) -> Optional[dict]:
@@ -129,7 +175,7 @@ def _generate_video_thumbnail(video_path: Path, thumbnail_path: Path) -> bool:
 
     for command in commands:
         if thumbnail_path.exists():
-            thumbnail_path.unlink()
+            _remove_if_exists(thumbnail_path)
         try:
             result = subprocess.run(command, capture_output=True, timeout=10)
         except Exception:
@@ -139,7 +185,7 @@ def _generate_video_thumbnail(video_path: Path, thumbnail_path: Path) -> bool:
             return True
 
     if thumbnail_path.exists() and thumbnail_path.stat().st_size == 0:
-        thumbnail_path.unlink()
+        _remove_if_exists(thumbnail_path)
 
     return False
 
@@ -266,19 +312,13 @@ class App:
                 finally:
                     await file.close()
             except HTTPException:
-                try:
-                    upload_path.unlink()
-                except OSError:
-                    pass
+                _remove_if_exists(upload_path)
                 raise
 
             # Get video info
             cap = cv2.VideoCapture(str(upload_path))
             if not cap.isOpened():
-                try:
-                    upload_path.unlink()
-                except OSError:
-                    pass
+                _remove_if_exists(upload_path)
                 raise HTTPException(status_code=400, detail="Could not read video file")
 
             fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
@@ -311,17 +351,11 @@ class App:
             processor = get_processor()
             pipeline = get_pipeline()
 
-            # Determine input path
-            if uploaded_file:
-                input_path = str(processor.uploads_dir / uploaded_file)
-                if not os.path.exists(input_path):
-                    raise HTTPException(status_code=404, detail="Uploaded file not found")
-            elif video_name:
-                input_path = get_video_path(video_name)
-                if not input_path:
-                    raise HTTPException(status_code=404, detail="Video not found")
-            else:
-                raise HTTPException(status_code=400, detail="No video specified")
+            input_path = _resolve_input_video_path(
+                processor,
+                uploaded_file=uploaded_file,
+                video_name=video_name,
+            )
 
             # Create job
             try:
@@ -451,10 +485,7 @@ class App:
                 str(processor.preview_dir / f"{job_id}_input.jpg"),
                 str(processor.preview_dir / f"{job_id}_output.jpg"),
             ):
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
+                _remove_if_exists(path)
 
             processor.delete_job(job_id)
             return JSONResponse({"status": "deleted"})
@@ -567,10 +598,7 @@ class App:
             thumbnails_dir = processor.outputs_dir.parent / "thumbnails"
             thumbnail_name = filename.rsplit(".", 1)[0] + ".jpg"
             thumbnail_path = thumbnails_dir / thumbnail_name
-            try:
-                os.remove(thumbnail_path)
-            except OSError:
-                pass
+            _remove_if_exists(thumbnail_path)
 
             return JSONResponse({"status": "deleted", "filename": filename})
 
@@ -598,17 +626,11 @@ class App:
             multistyle = get_multistyle_processor()
             pipeline = get_pipeline()
 
-            # Determine input path
-            if uploaded_file:
-                input_path = str(processor.uploads_dir / uploaded_file)
-                if not os.path.exists(input_path):
-                    raise HTTPException(status_code=404, detail="Uploaded file not found")
-            elif video_name:
-                input_path = get_video_path(video_name)
-                if not input_path:
-                    raise HTTPException(status_code=404, detail="Video not found")
-            else:
-                raise HTTPException(status_code=400, detail="No video specified")
+            input_path = _resolve_input_video_path(
+                processor,
+                uploaded_file=uploaded_file,
+                video_name=video_name,
+            )
 
             # Create job
             try:

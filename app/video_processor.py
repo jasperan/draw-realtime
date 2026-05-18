@@ -24,6 +24,17 @@ class JobStatus(str, Enum):
     FAILED = "failed"
 
 
+def _remove_paths(*paths: str) -> None:
+    """Best-effort cleanup for generated files and temp outputs."""
+    for path in paths:
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+
+
 @dataclass
 class ProcessingJob:
     """Represents a video processing job."""
@@ -97,15 +108,13 @@ class VideoProcessor:
         ], capture_output=True, text=True)
 
         if result.returncode != 0:
-            try:
-                os.remove(final_path)
-            except OSError:
-                pass
+            _remove_paths(final_path)
             return False
 
         try:
             os.replace(final_path, source_path)  # atomic on POSIX + Windows
         except OSError:
+            _remove_paths(final_path)
             return False
         return True
 
@@ -263,19 +272,12 @@ class VideoProcessor:
                 return True
 
             except Exception as e:
-                job.status = JobStatus.FAILED
-                job.error = str(e)
-                job.completed_at = time.time()
-                print(f"MonarchRT generation error for job {job.job_id}: {e}")
-                import traceback
-                traceback.print_exc()
-
-                try:
-                    os.remove(job.output_path)
-                except OSError:
-                    pass
-
-                return False
+                return self._fail_job(
+                    job,
+                    e,
+                    "MonarchRT generation error",
+                    cleanup_paths=(job.output_path,),
+                )
 
     async def process_job(self, job_id: str, pipeline) -> bool:
         """Async entry point for a video-to-video job.
@@ -381,24 +383,32 @@ class VideoProcessor:
                 return True
 
             except Exception as e:
-                job.status = JobStatus.FAILED
-                job.error = str(e)
-                job.completed_at = time.time()
-                print(f"Processing error for job {job.job_id}: {e}")
-                import traceback
-                traceback.print_exc()
+                return self._fail_job(
+                    job,
+                    e,
+                    "Processing error",
+                    cleanup_paths=(
+                        job.output_path,
+                        job.output_path.replace('.mp4', '_h264.mp4'),
+                    ),
+                )
 
-                # Best-effort cleanup of partial output and any leftover temp.
-                for path in (
-                    job.output_path,
-                    job.output_path.replace('.mp4', '_h264.mp4'),
-                ):
-                    try:
-                        os.remove(path)
-                    except OSError:
-                        pass
-
-                return False
+    def _fail_job(
+        self,
+        job: "ProcessingJob",
+        error: Exception,
+        message: str,
+        cleanup_paths: tuple[str, ...] = (),
+    ) -> bool:
+        """Mark a job failed, preserve the error, and remove partial files."""
+        job.status = JobStatus.FAILED
+        job.error = str(error)
+        job.completed_at = time.time()
+        print(f"{message} for job {job.job_id}: {error}")
+        import traceback
+        traceback.print_exc()
+        _remove_paths(*cleanup_paths)
+        return False
 
     def get_job(self, job_id: str) -> Optional[ProcessingJob]:
         """Get a job by ID."""

@@ -111,6 +111,34 @@ class TestGetVideoPath:
             assert get_video_path("../../etc/passwd") is None
             assert get_video_path("../secret.mp4") is None
 
+    def test_blocks_sibling_directory_prefix_escape(self, tmp_path):
+        """A sibling directory with the same prefix is not inside videos_dir."""
+        from app.video_source import get_video_path
+
+        videos_dir = tmp_path / "videos"
+        videos_dir.mkdir()
+        sibling_dir = tmp_path / "videos_evil"
+        sibling_dir.mkdir()
+        escaped_video = sibling_dir / "secret.mp4"
+        escaped_video.write_bytes(b"\x00" * 1024)
+
+        with patch("app.video_source.config") as mock_config:
+            mock_config.videos_dir = str(videos_dir)
+            assert get_video_path(str(escaped_video)) is None
+
+    def test_blocks_symlink_loop(self, tmp_path):
+        """Invalid symlink loops are treated as missing videos, not server errors."""
+        from app.video_source import get_video_path
+
+        videos_dir = tmp_path / "videos"
+        videos_dir.mkdir()
+        (videos_dir / "loop_a.mp4").symlink_to("loop_b.mp4")
+        (videos_dir / "loop_b.mp4").symlink_to("loop_a.mp4")
+
+        with patch("app.video_source.config") as mock_config:
+            mock_config.videos_dir = str(videos_dir)
+            assert get_video_path("loop_a.mp4") is None
+
 
 # ---------------------------------------------------------------------------
 # VideoSource class

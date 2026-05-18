@@ -172,6 +172,7 @@ frontend/build/
 .claude/
 .claudeignore
 .serena/
+.omx/
 .pi/
 .agents/
 .crush/

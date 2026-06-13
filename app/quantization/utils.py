@@ -16,6 +16,21 @@ from pathlib import Path
 from .bitlinear import BitLinear
 
 
+def get_module(root: nn.Module, dotted_name: str) -> nn.Module:
+    """Resolve a dotted module path (e.g. "blocks.0.attn.to_q") to a submodule."""
+    module = root
+    for part in dotted_name.split("."):
+        module = getattr(module, part)
+    return module
+
+
+def replace_module(root: nn.Module, dotted_name: str, new_module: nn.Module) -> None:
+    """Replace the submodule at a dotted path with `new_module` on its parent."""
+    parts = dotted_name.split(".")
+    parent = get_module(root, ".".join(parts[:-1])) if len(parts) > 1 else root
+    setattr(parent, parts[-1], new_module)
+
+
 def save_quantized_model(
     unet: nn.Module,
     output_dir: str,
@@ -107,11 +122,7 @@ def load_quantized_model(
 
     for layer_name in quantized_layers:
         try:
-            # Navigate to the layer and check if it's Linear
-            parts = layer_name.split(".")
-            module = unet
-            for part in parts:
-                module = getattr(module, part)
+            module = get_module(unet, layer_name)
 
             if isinstance(module, nn.Linear):
                 # Create empty BitLinear (weights will be loaded from state dict)
@@ -122,12 +133,7 @@ def load_quantized_model(
                     device=device,
                     dtype=module.weight.dtype,
                 )
-
-                # Replace in parent
-                parent = unet
-                for part in parts[:-1]:
-                    parent = getattr(parent, part)
-                setattr(parent, parts[-1], bit_linear)
+                replace_module(unet, layer_name, bit_linear)
 
         except AttributeError as e:
             if strict:

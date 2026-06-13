@@ -63,20 +63,6 @@ def _safe_path(base_dir: Path, filename: str) -> Path:
     return candidate
 
 
-def _safe_child_path(base_dir: Path, filename: str) -> Path:
-    """Return a direct child path under `base_dir` for internal file handles."""
-    if not filename or "/" in filename or "\\" in filename or "\x00" in filename:
-        raise HTTPException(status_code=400, detail="Invalid filename")
-
-    try:
-        base_resolved = Path(base_dir).resolve()
-        candidate = (base_resolved / filename).resolve()
-        candidate.relative_to(base_resolved)
-    except (ValueError, OSError, RuntimeError):
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    return candidate
-
-
 def _remove_if_exists(path: Path | str) -> None:
     """Best-effort removal for files that may already be gone."""
     try:
@@ -95,7 +81,7 @@ def _resolve_input_video_path(
 ) -> str:
     """Resolve the selected input video from uploads or the server library."""
     if uploaded_file:
-        upload_path = _safe_child_path(processor.uploads_dir, uploaded_file)
+        upload_path = _safe_path(processor.uploads_dir, uploaded_file)
         if not upload_path.exists():
             raise HTTPException(status_code=404, detail="Uploaded file not found")
         return str(upload_path)

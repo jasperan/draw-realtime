@@ -33,6 +33,12 @@ dev = [
     "pip-audit>=2.7,<3"
 ]
 
+[tool.pytest.ini_options]
+# The real test suite lives in tests/. Exploratory GPU scripts under scripts/
+# (test_*.py) are run by hand and import optional deps at module scope, so they
+# must not be swept up by pytest collection.
+testpaths = ["tests"]
+
 [tool.uv]
 
 [[tool.uv.index]]

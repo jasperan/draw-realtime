@@ -31,7 +31,12 @@ from app.config import MODELS, DEFAULT_MODEL, DEFAULT_PROMPT, DEFAULT_NEGATIVE_P
 
 # Quantization support
 from app.quantization import BitLinear, TernaryLinear
-from app.quantization.utils import load_quantized_model, get_model_size_mb
+from app.quantization.utils import (
+    load_quantized_model,
+    get_model_size_mb,
+    get_module,
+    replace_module,
+)
 
 
 # Serializes GPU access so concurrent jobs can't clobber each other mid-load.
@@ -343,23 +348,14 @@ class Pipeline:
 
             print(f"Replacing {len(quantized_layers)} layers with BitLinear...")
             for layer_name in quantized_layers:
-                # Navigate to parent module
-                parts = layer_name.split('.')
-                parent = transformer
-                for part in parts[:-1]:
-                    parent = getattr(parent, part)
-                attr_name = parts[-1]
-
                 # Get original module to extract dimensions
-                original = getattr(parent, attr_name)
-                in_features = original.in_features
-                out_features = original.out_features
+                original = get_module(transformer, layer_name)
                 has_bias = original.bias is not None
 
                 # Create BitLinear replacement
                 bit_linear = BitLinear(
-                    in_features=in_features,
-                    out_features=out_features,
+                    in_features=original.in_features,
+                    out_features=original.out_features,
                     bias=has_bias,
                     device='cpu',  # Load to CPU first
                     dtype=torch.bfloat16,
@@ -374,7 +370,7 @@ class Pipeline:
 
                 # Move to device and replace
                 bit_linear = bit_linear.to(self.device)
-                setattr(parent, attr_name, bit_linear)
+                replace_module(transformer, layer_name, bit_linear)
 
             # Clear original state dict to free memory
             del state_dict
@@ -478,22 +474,13 @@ class Pipeline:
         converted = 0
         for name, module in list(model.named_modules()):
             if isinstance(module, BitLinear):
-                # Get parent module
-                parts = name.split('.')
-                parent = model
-                for part in parts[:-1]:
-                    parent = getattr(parent, part)
-                attr_name = parts[-1]
-
                 # Convert to TernaryLinear with cached weights
                 ternary = TernaryLinear.from_bitlinear(
                     module,
                     use_triton=False,  # Use cached cuBLAS mode
                     cache_weights=True
                 )
-
-                # Replace module
-                setattr(parent, attr_name, ternary)
+                replace_module(model, name, ternary)
                 converted += 1
 
         return converted

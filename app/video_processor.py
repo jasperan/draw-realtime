@@ -86,7 +86,7 @@ class VideoProcessor:
 
     def __init__(self):
         self.jobs: Dict[str, ProcessingJob] = {}
-        self.outputs_dir = Path(config.outputs_dir) if hasattr(config, 'outputs_dir') else Path("outputs")
+        self.outputs_dir = Path(config.outputs_dir)
         self.uploads_dir = Path("uploads")
         self.preview_dir = Path("previews")  # For real-time frame previews
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
@@ -213,7 +213,8 @@ class VideoProcessor:
         with pipeline_lock():
             try:
                 if job.model != pipeline.get_current_model():
-                    pipeline.load_model(job.model)
+                    if not pipeline.load_model(job.model):
+                        raise ValueError(f"Failed to load model: {job.model}")
                 pipeline.update_prompt(job.prompt)
 
                 from app.config import MODELS
@@ -306,7 +307,8 @@ class VideoProcessor:
         with pipeline_lock():
             try:
                 if job.model != pipeline.get_current_model():
-                    pipeline.load_model(job.model)
+                    if not pipeline.load_model(job.model):
+                        raise ValueError(f"Failed to load model: {job.model}")
                 pipeline.update_prompt(job.prompt)
 
                 cap = cv2.VideoCapture(job.input_path)

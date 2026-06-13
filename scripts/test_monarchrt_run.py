@@ -11,7 +11,8 @@ import gc
 import math
 import random
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "MonarchRT"))
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(_PROJECT_ROOT, "MonarchRT"))
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 import torch
@@ -37,7 +38,7 @@ from wan.modules.vae import WanVAE
 from wan.modules.t5 import T5EncoderModel
 
 config = WAN_CONFIGS['t2v-1.3B']
-checkpoint_dir = os.path.join(os.path.dirname(__file__), "MonarchRT", "wan_models", "Wan2.1-T2V-1.3B")
+checkpoint_dir = os.path.join(_PROJECT_ROOT, "MonarchRT", "wan_models", "Wan2.1-T2V-1.3B")
 
 # ---- Step 1: Load T5 on CPU, encode text, then free it ----
 print("Step 1: Loading T5 text encoder (CPU)...")

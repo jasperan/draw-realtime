@@ -123,7 +123,7 @@ class MultiStyleProcessor:
 
     def __init__(self):
         self.jobs: Dict[str, MultiStyleJob] = {}
-        self.outputs_dir = Path(config.outputs_dir) if hasattr(config, 'outputs_dir') else Path("outputs")
+        self.outputs_dir = Path(config.outputs_dir)
         self.multistyle_dir = self.outputs_dir / "multistyle"
         self.multistyle_dir.mkdir(parents=True, exist_ok=True)
 

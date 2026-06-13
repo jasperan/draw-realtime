@@ -347,9 +347,11 @@ draw-realtime/
 │       ├── bitlinear.py     # BitLinear layer implementation
 │       ├── quantize.py      # Quantization functions
 │       └── utils.py         # Save/load utilities
-├── scripts/
+├── scripts/                 # Standalone tooling and GPU exploration scripts
 │   ├── quantize_model.py    # One-time quantization script
-│   └── benchmark.py         # Performance comparison
+│   ├── benchmark.py         # Performance comparison
+│   ├── verify.sh            # Local check suite (syntax, pytest, build, security)
+│   └── test_monarchrt_*.py  # MonarchRT generation smoke scripts (run by hand)
 ├── frontend/                 # Svelte web UI
 │   ├── src/App.svelte       # Main UI component
 │   └── build/               # Production build

@@ -375,6 +375,7 @@ Environment variables:
 ```bash
 HOST=0.0.0.0          # Server bind address
 PORT=7860             # Server port
+CORS_ORIGINS=http://localhost:7860,http://127.0.0.1:7860   # Allowed browser origins (default: local UI)
 VIDEOS_DIR=videos     # Input videos directory
 ENGINES_DIR=engines   # TensorRT engines cache
 DEBUG=true            # Enable debug logging

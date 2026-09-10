@@ -63,6 +63,20 @@ def _safe_path(base_dir: Path, filename: str) -> Path:
     return candidate
 
 
+def _cors_origins() -> list[str]:
+    """Return the browser origins allowed to call the API.
+
+    Defaults to the local UI origins, which is what the shipped frontend
+    uses (it is mounted on this app and the Vite dev server proxies /api).
+    Deployments that serve the UI from another origin must list it in the
+    comma-separated CORS_ORIGINS environment variable.
+    """
+    configured = os.getenv("CORS_ORIGINS", "").strip()
+    if configured:
+        return [origin.strip() for origin in configured.split(",") if origin.strip()]
+    return [f"http://localhost:{config.port}", f"http://127.0.0.1:{config.port}"]
+
+
 def _remove_if_exists(path: Path | str) -> None:
     """Best-effort removal for files that may already be gone."""
     try:
@@ -215,12 +229,14 @@ class App:
 
     def _setup_middleware(self):
         """Configure CORS middleware."""
-        # Per CORS spec, wildcard origins + credentials is invalid and browsers
-        # will drop the credentials header anyway. Don't pretend we support
-        # credentialed cross-origin requests when we don't.
+        # This API is unauthenticated and can spawn ffmpeg/CUDA jobs, so it
+        # must not be readable by arbitrary web pages: a wildcard origin
+        # (or wildcard + credentials, which browsers only tolerate by
+        # echoing the request origin) would hand any visited site the full
+        # job/upload/delete API. See _cors_origins for the allowlist.
         self.app.add_middleware(
             CORSMiddleware,
-            allow_origins=["*"],
+            allow_origins=_cors_origins(),
             allow_methods=["*"],
             allow_headers=["*"],
         )

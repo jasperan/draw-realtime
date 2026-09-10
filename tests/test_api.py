@@ -22,6 +22,8 @@ sys.modules.setdefault("utils", MagicMock())
 sys.modules.setdefault("utils.wrapper", _mock_wrapper_module)
 sys.modules.setdefault("streamdiffusion", MagicMock())
 
+from app.config import config  # noqa: E402  (after the module mocks above)
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -313,6 +315,44 @@ class TestDeleteOutput:
     def test_missing_output_returns_404(self, client):
         resp = client.delete("/api/output/nonexistent.mp4")
         assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# CORS policy
+# ---------------------------------------------------------------------------
+
+class TestCorsPolicy:
+    def test_arbitrary_origin_is_not_reflected(self, client):
+        resp = client.get("/api/settings", headers={"Origin": "https://evil.example"})
+
+        assert resp.status_code == 200
+        allow_origin = resp.headers.get("access-control-allow-origin")
+        assert allow_origin != "https://evil.example"
+        assert allow_origin != "*"
+
+    def test_local_ui_origin_is_allowed(self, client):
+        origin = f"http://localhost:{config.port}"
+        resp = client.get("/api/settings", headers={"Origin": origin})
+
+        assert resp.headers.get("access-control-allow-origin") == origin
+
+
+def test_cors_origins_default_is_local_ui(monkeypatch):
+    from app.main import _cors_origins
+
+    monkeypatch.delenv("CORS_ORIGINS", raising=False)
+    origins = _cors_origins()
+
+    assert "*" not in origins
+    assert f"http://localhost:{config.port}" in origins
+
+
+def test_cors_origins_env_override(monkeypatch):
+    from app.main import _cors_origins
+
+    monkeypatch.setenv("CORS_ORIGINS", "https://ui.example, https://admin.example")
+
+    assert _cors_origins() == ["https://ui.example", "https://admin.example"]
 
 
 # ---------------------------------------------------------------------------

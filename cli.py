@@ -141,7 +141,7 @@ def process_video(
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     duration = total_frames / fps
 
-    console.print(f"\n[bold cyan]Processing Video[/bold cyan]")
+    console.print("\n[bold cyan]Processing Video[/bold cyan]")
     console.print(f"  Input:    {input_path}")
     console.print(f"  Output:   {output_path}")
     console.print(f"  Duration: {duration:.1f}s ({total_frames} frames @ {fps:.1f} fps)")
@@ -223,7 +223,7 @@ def process_video(
     elapsed = time.time() - start_time
     fps_actual = total_frames / elapsed
 
-    console.print(f"\n[bold green]✓ Complete![/bold green]")
+    console.print("\n[bold green]✓ Complete![/bold green]")
     console.print(f"  Time:     {elapsed:.1f}s ({fps_actual:.1f} fps)")
     console.print(f"  Output:   {output_path}")
 
@@ -295,7 +295,7 @@ def generate_video(
     out_h = model_config.height or 480
     fps = 16.0 if model_config.monarchrt_mode == "causal" else 24.0
 
-    console.print(f"\n[bold cyan]MonarchRT Video Generation[/bold cyan]")
+    console.print("\n[bold cyan]MonarchRT Video Generation[/bold cyan]")
     console.print(f"  Model:    {model_config.description}")
     console.print(f"  Prompt:   {prompt}")
     console.print(f"  Frames:   {num_frames}")
@@ -374,7 +374,7 @@ def generate_video(
     elapsed = time.time() - start_time
     fps_actual = len(frames) / elapsed
 
-    console.print(f"\n[bold green]Complete![/bold green]")
+    console.print("\n[bold green]Complete![/bold green]")
     console.print(f"  Time:     {elapsed:.1f}s ({fps_actual:.1f} fps)")
     console.print(f"  Output:   {output_path}")
 
@@ -413,7 +413,7 @@ def process_multistyle(
     duration = total_frames / fps
     cap.release()
 
-    console.print(f"\n[bold cyan]Multi-Style FLUX Generation[/bold cyan]")
+    console.print("\n[bold cyan]Multi-Style FLUX Generation[/bold cyan]")
     console.print(f"  Input:    {input_path}")
     console.print(f"  Duration: {duration:.1f}s ({total_frames} frames @ {fps:.1f} fps)")
     console.print(f"  Styles:   {', '.join(s[0] for s in STYLES)}\n")
@@ -434,7 +434,7 @@ def process_multistyle(
 
     # Phase 1: LLaVA analysis (or use provided description)
     if description:
-        console.print(f"[bold green]Using provided description...[/bold green]")
+        console.print("[bold green]Using provided description...[/bold green]")
         job.description = description
     else:
         with console.status("[bold green]Analyzing video with LLaVA..."):
@@ -501,7 +501,6 @@ def process_multistyle(
         out.release()
 
         # Re-encode with H.264
-        import subprocess
         result = subprocess.run([
             'ffmpeg', '-y', '-i', temp_path,
             '-c:v', 'libx264', '-preset', 'fast',
@@ -529,7 +528,7 @@ def process_multistyle(
 
     elapsed = time.time() - start_time
 
-    console.print(f"\n[bold green]✓ Multi-Style Complete![/bold green]")
+    console.print("\n[bold green]✓ Multi-Style Complete![/bold green]")
     console.print(f"  Time:     {elapsed:.1f}s")
     console.print(f"  Outputs:  {len(job.completed_outputs)} style videos + 1 grid")
     console.print(f"  Location: {job.output_dir}\n")

@@ -307,7 +307,6 @@ class Pipeline:
         try:
             from diffusers import Flux2KleinPipeline
             import json
-            from app.quantization import BitLinear
 
             # Determine quantized model path
             quantized_path = Path(model_config.quantized_path)

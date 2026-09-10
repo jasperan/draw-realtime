@@ -5,6 +5,7 @@ Compares BitLinear (current) vs TernaryLinear (new optimized) performance.
 """
 
 import os
+import subprocess
 import sys
 import time
 import gc
@@ -378,8 +379,15 @@ def main():
     for name, r in results.items():
         input_mp4 = r['output']
         output_h264 = input_mp4.replace('.mp4', '_h264.mp4')
-        cmd = f'ffmpeg -y -i "{input_mp4}" -c:v libx264 -crf 18 -preset fast "{output_h264}" 2>/dev/null'
-        os.system(cmd)
+        # argv form (no shell), so output paths can never be parsed as shell syntax.
+        subprocess.run(
+            [
+                'ffmpeg', '-y', '-i', input_mp4,
+                '-c:v', 'libx264', '-crf', '18', '-preset', 'fast',
+                output_h264,
+            ],
+            stderr=subprocess.DEVNULL,
+        )
         print(f"  {name}: {output_h264}")
 
     print("\nDone!")
